@@ -17,7 +17,9 @@ export function validateOrder(o){
 }
 // 取消的訂單保留原始資料（cancelledAt 為取消時間），不計入件數、金額與匯出；恢復後重新計算。
 export const isCancelled=o=>typeof o.cancelledAt==='string';
-export function summarize(orders, overrides={}){
+// noStore：不用取貨門市的團別（面交、另寄），這些團不檢查門市
+export function summarize(orders, overrides={}, noStore=[]){
+  const noStoreSet=new Set((noStore||[]).map(c=>String(c).trim()));
   const map=new Map();
   for(const o of orders){
     const key=JSON.stringify([o.campaign.trim(),cleanEmail(o.email)||`missing:${o.id}`]);
@@ -36,10 +38,10 @@ export function summarize(orders, overrides={}){
     const possibleDuplicate=new Set(fingerprints).size<rows.length;
     const override=overrides[g.key]||{};
     const store=stores.includes(override.store)?override.store:stores.length===1?stores[0]:'';
-    const issues=[];
+    const issues=[],skipStore=noStoreSet.has(g.campaign.trim());
     if(rows.length){
-      if(stores.length>1&&!store) issues.push('取貨門市不一致');
-      if(rows.some(o=>!o.store.trim())&&!override.store) issues.push('缺少取貨門市');
+      if(stores.length>1&&!store&&!skipStore) issues.push('取貨門市不一致');
+      if(rows.some(o=>!o.store.trim())&&!override.store&&!skipStore) issues.push('缺少取貨門市');
       if(phones.length>1) issues.push('手機號碼不一致');
       if(names.length>1) issues.push('收件人姓名不一致');
     }
@@ -53,7 +55,7 @@ export function summarize(orders, overrides={}){
     if(claimIssue) issues.push(unreadable.length?`買家填的匯款金額看不懂（「${unreadable.join('」「')}」），請看原始表單核對`:`買家填的匯款金額 ${claimed.toLocaleString('en-US')}，團團算 ${total.toLocaleString('en-US')}，${claimed<total?'少匯':'多匯'} ${Math.abs(total-claimed).toLocaleString('en-US')} 元`);
     if(cancelledPaid>0&&!override.refundChecked) issues.push(`已取消的商品已付 ${cancelledPaid.toLocaleString('en-US')} 元，請核對退款`);
     if(rows.some(o=>validateOrder(o).length)) issues.push('訂單欄位格式有誤');
-    return {...g,name:people[0].name,store,stores,phone:phones[0],total,paid,balance:total-paid,quantity:rows.reduce((n,o)=>n+o.quantity,0),cancelledPaid,active:rows.length>0,issues,possibleDuplicate,claims:claims.length,claimed,unreadable,claimIssue:!!claimIssue,claimChecked:claims.length>0&&claimChecked&&(unreadable.length>0||claimed!==total)};
+    return {...g,noStore:skipStore,name:people[0].name,store,stores,phone:phones[0],total,paid,balance:total-paid,quantity:rows.reduce((n,o)=>n+o.quantity,0),cancelledPaid,active:rows.length>0,issues,possibleDuplicate,claims:claims.length,claimed,unreadable,claimIssue:!!claimIssue,claimChecked:claims.length>0&&claimChecked&&(unreadable.length>0||claimed!==total)};
   });
 }
 export function summaryCsv(groups){
@@ -83,9 +85,23 @@ export function itemTotals(groups){
   return [...map.values()].map(({buyers,prices,...t})=>({...t,buyers:buyers.size,prices:[...prices].sort((a,b)=>a-b)}))
     .sort((a,b)=>a.campaign.localeCompare(b.campaign,'zh-Hant')||b.quantity-a.quantity||a.item.localeCompare(b.item,'zh-Hant'));
 }
+// 跟廠商訂的數量（purchased）以「團別＋商品」為 key
+export const itemKey=(campaign,item)=>JSON.stringify([String(campaign).trim(),String(item).trim()]);
+// 已訂數量照表單填寫順序（訂單在清單裡的先後）分給買家：先填先分到，分完為止；取消的不分。
+// 回傳 Map(訂單 id → 分到幾件)；沒填已訂數量的商品不會出現在結果裡
+export function allocatePurchased(orders,purchased={}){
+  const left=new Map(Object.entries(purchased||{})),got=new Map();
+  for(const o of orders){
+    if(isCancelled(o))continue;
+    const key=itemKey(o.campaign,o.item);if(!left.has(key))continue;
+    const n=Math.min(left.get(key),o.quantity);got.set(o.id,n);left.set(key,left.get(key)-n);
+  }
+  return got;
+}
 const csvCell=value=>'"'+String(value??'').replace(/^[=+@\-\t\r]/,"'$&").replaceAll('"','""')+'"';
-export function itemTotalsCsv(totals){
-  const rows=[['團別','商品','總件數','買家人數','商品金額','單價','其中待確認件數'],...totals.map(t=>[t.campaign,t.item,t.quantity,t.buyers,t.amount,t.prices.join('／'),t.pendingQuantity])];
+export function itemTotalsCsv(totals,purchased={}){
+  const ordered=t=>purchased[itemKey(t.campaign,t.item)];
+  const rows=[['團別','商品','總件數','買家人數','商品金額','單價','其中待確認件數','已訂件數','還差件數'],...totals.map(t=>[t.campaign,t.item,t.quantity,t.buyers,t.amount,t.prices.join('／'),t.pendingQuantity,ordered(t)??'',ordered(t)===undefined?'':Math.max(0,t.quantity-ordered(t))])];
   return '\uFEFF'+rows.map(row=>row.map(csvCell).join(',')).join('\r\n');
 }
 // 給買家的對帳訊息（純文字，貼到 LINE／訊息）。只寫手動紀錄的金額，不代表付款證明或退款承諾。
@@ -96,7 +112,7 @@ export function buyerMessage(g,note=''){
     for(const o of g.orders)lines.push(`・${o.item} × ${o.quantity}　${n(o.price*o.quantity)}`);
     lines.push(`商品合計：${n(g.total)}（未含運費）`,`已付：${n(g.paid)}`);
     lines.push(g.balance>0?`待付：${n(g.balance)}`:g.balance===0?'款項已付清，謝謝！':`已付超過商品合計 ${n(-g.balance)}，我們會再與您確認。`);
-    lines.push(`取貨門市：${g.store||'尚待確認'}`);
+    lines.push(g.noStore&&!g.store?'取貨方式：面交或另外寄送，會再跟您約':`取貨門市：${g.store||'尚待確認'}`);
   }else lines.push('您在這團的商品都已取消。');
   if(g.cancelled.length)lines.push('已取消（不計費）：'+g.cancelled.map(o=>`${o.item} × ${o.quantity}`).join('、'));
   if(String(note).trim())lines.push('',String(note).trim());

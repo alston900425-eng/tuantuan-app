@@ -1,10 +1,13 @@
 import {validateOrder,summarize,stages} from './core.js';
 
-export const SCHEMA_VERSION=3;
+// 4：加入已訂數量 purchased、每項已寄出 shipped、不用門市的團別 noStore、資料最後修改時間 updatedAt；
+// 備份檔另外帶 savedAt／savedBy（哪時、哪裡存的），讀進來後不留在資料裡
+export const SCHEMA_VERSION=4;
 
 export const MAX_BACKUP_BYTES=5*1024*1024;
 export const storageKey='tuantuan-prototype-v1';
 export const recoveryKey=storageKey+'-before-restore';
+const isTime=value=>typeof value==='string'&&value.length<=40&&Number.isFinite(Date.parse(value));
 const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 function fields(value,allowed,label){
   if(!object(value))throw new Error(`${label}必須是物件`);
@@ -12,8 +15,10 @@ function fields(value,allowed,label){
 }
 
 export function validateBackup(value){
-  fields(value,['schemaVersion','orders','overrides','history','demo','progress'],'備份');
-  if(value.schemaVersion!==undefined&&![1,2,3].includes(value.schemaVersion))throw new Error('不支援此備份版本');
+  fields(value,['schemaVersion','orders','overrides','history','demo','progress','purchased','shipped','noStore','updatedAt','savedAt','savedBy'],'備份');
+  if(value.schemaVersion!==undefined&&![1,2,3,4].includes(value.schemaVersion))throw new Error('不支援此備份版本');
+  for(const key of ['updatedAt','savedAt'])if(value[key]!==undefined&&!isTime(value[key]))throw new Error('備份的時間紀錄無效');
+  if(value.savedBy!==undefined&&!['desktop','web'].includes(value.savedBy))throw new Error('備份的來源紀錄無效');
   if(typeof value.demo!=='boolean')throw new Error('備份 demo 必須是布林值');
   if(!Array.isArray(value.orders)||value.orders.length>10000)throw new Error('訂單必須是陣列，最多 10,000 筆');
   const ids=new Set();
@@ -65,7 +70,25 @@ export function validateBackup(value){
     if(key.length>2000||!stages.some(([stage])=>stage===entry.stage))throw new Error('買家進度的狀態無效');
     if(typeof entry.at!=='string'||entry.at.length>40||!Number.isFinite(Date.parse(entry.at))||typeof entry.signature!=='string'||entry.signature.length>100)throw new Error('買家進度的時間或紀錄無效');
   }
-  return structuredClone({...value,progress,schemaVersion:SCHEMA_VERSION});
+  const purchased=value.purchased??{};
+  if(!object(purchased)||Object.keys(purchased).length>10000)throw new Error('已訂數量必須是物件，最多 10,000 項');
+  for(const [key,n] of Object.entries(purchased))if(key.length>2000||!Number.isSafeInteger(n)||n<0||n>10000000)throw new Error('已訂數量無效');
+  const shipped=value.shipped??{};
+  if(!object(shipped)||Object.keys(shipped).length>10000)throw new Error('已寄出紀錄必須是物件，最多 10,000 筆');
+  for(const [id,at] of Object.entries(shipped))if(id.length>500||!isTime(at))throw new Error('已寄出紀錄的時間無效');
+  const noStore=value.noStore??[];
+  if(!Array.isArray(noStore)||noStore.length>1000||noStore.some(c=>typeof c!=='string'||!c.trim()||c.length>500))throw new Error('不用門市的團別無效');
+  const {savedAt,savedBy,...rest}=value;
+  return structuredClone({...rest,progress,purchased,shipped,noStore,schemaVersion:SCHEMA_VERSION});
+}
+// 寫進備份檔的文字：多記哪時、哪裡存的（desktop 電腦版／web 手機或網頁版）
+export function backupText(state,savedBy,now=new Date()){
+  return JSON.stringify({...state,schemaVersion:SCHEMA_VERSION,savedAt:now.toISOString(),savedBy},null,2);
+}
+// 讀備份檔：回傳 {state, savedAt, savedBy}；舊版備份沒有時間就是 undefined
+export function parseBackupFile(text){
+  const state=parseBackup(text),raw=JSON.parse(text.replace(/^\uFEFF/,''));
+  return {state,savedAt:raw.savedAt,savedBy:raw.savedBy};
 }
 
 export function parseBackup(text){

@@ -1,9 +1,9 @@
-import {summarize,validateOrder,demoOrders,summaryCsv,itemTotals,itemTotalsCsv,buyerMessage,cleanPhone,stages,progressOf,groupSignature,noPickupHistory} from './core.js';
+import {summarize,validateOrder,demoOrders,summaryCsv,itemTotals,itemTotalsCsv,buyerMessage,cleanPhone,stages,progressOf,groupSignature,noPickupHistory,allocatePurchased,itemKey} from './core.js';
 const messageNoteKey='tuantuan-message-note';
 import {importFields,guessMapping,guessProducts,readTable,planImport,MAX_PRODUCTS,pickTimes} from './importer.js';
 import {formIdFromUrl,responsesToTable,splitNew,mappingToNames,namesToMapping} from './google-sync.js';
 import {logo,heroArt,emptyArt,stageIcon,themes,themeKey,applyTheme,sizes,sizeKey,applySize} from './art.js';
-import {storageKey,recoveryKey,MAX_BACKUP_BYTES,SCHEMA_VERSION,parseBackup,restoreBackup} from './backup.js';
+import {storageKey,recoveryKey,MAX_BACKUP_BYTES,SCHEMA_VERSION,parseBackup,parseBackupFile,backupText,restoreBackup} from './backup.js';
 const $=selector=>document.querySelector(selector);
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=value=>'NT$ '+value.toLocaleString('en-US');
@@ -11,10 +11,12 @@ const paths={home:'M3 10 12 3l9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z M9 21v-8h6v8
 const icon=name=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${paths[name]||paths.orders}"/></svg>`;
 let pendingRestore=null;
 let importBook=null,importTable=null,importPlan=null,importFileName='';
-let state={schemaVersion:SCHEMA_VERSION,orders:structuredClone(demoOrders),overrides:{},history:[],demo:true,progress:{}};
+const emptyState=demo=>({schemaVersion:SCHEMA_VERSION,orders:demo?structuredClone(demoOrders):[],overrides:{},history:[],demo,progress:{},purchased:{},shipped:{},noStore:[]});
+let state=emptyState(true);
 let storageWarning='';
 try{const saved=JSON.parse(localStorage.getItem(storageKey));if(saved&&Array.isArray(saved.orders)&&saved.orders.every(o=>typeof o.id==='string'&&typeof o.store==='string'&&validateOrder(o).length===0)&&saved.overrides&&Array.isArray(saved.history))state=saved;}catch{storageWarning='無法讀取本機資料，已載入示範訂單。';}
-if(!state.progress||typeof state.progress!=='object'||Array.isArray(state.progress))state.progress={};
+for(const key of ['progress','purchased','shipped'])if(!state[key]||typeof state[key]!=='object'||Array.isArray(state[key]))state[key]={};
+if(!Array.isArray(state.noStore))state.noStore=[];
 let currentTheme='';try{currentTheme=localStorage.getItem(themeKey)||'';}catch{}
 if(!themes.some(t=>t[0]===currentTheme))currentTheme='';
 applyTheme(currentTheme);
@@ -24,15 +26,16 @@ applySize(currentSize);
 let page='home',filter='all',query='',campaign='all',stageFilter='any';
 const when=at=>new Date(at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'});
 const nav=[['home','總覽'],['orders','訂單'],['sources','資料來源'],['export','匯出'],['settings','設定']];
-const groups=()=>summarize(state.orders,state.overrides).filter(g=>campaign==='all'||g.campaign===campaign);
-const save=()=>{try{localStorage.setItem(storageKey,JSON.stringify(state));scheduleAutoBackup();return true;}catch{toast('本機儲存失敗，請先備份資料，關閉後可能遺失。');return false;}};
+const allGroups=()=>summarize(state.orders,state.overrides,state.noStore);
+const groups=()=>allGroups().filter(g=>campaign==='all'||g.campaign===campaign);
+const save=()=>{try{state.updatedAt=new Date().toISOString();localStorage.setItem(storageKey,JSON.stringify(state));scheduleAutoBackup();return true;}catch{toast('本機儲存失敗，請先備份資料，關閉後可能遺失。');return false;}};
 // EXE 自動備份：修改後 1.5 秒存「最新」（main 另建每日一份）；清空／重設／還原／匯入前先存「變更前」。網頁版沒有。
 const desktop=globalThis.tuantuanDesktop;
 let backupTimer,backupStatus={};
 async function runAutoBackup(kind='latest'){
  if(!desktop?.autoBackup)return {skipped:true};
  clearTimeout(backupTimer);backupTimer=null;
- let result;try{result=await desktop.autoBackup(JSON.stringify({...state,schemaVersion:SCHEMA_VERSION},null,2),kind);}catch(error){result={error:error.message||'未知錯誤'};}
+ let result;try{result=await desktop.autoBackup(backupText(state,'desktop'),kind);}catch(error){result={error:error.message||'未知錯誤'};}
  if(result.error&&!backupStatus.error)toast('自動備份失敗：'+result.error);
  backupStatus=result;if(page==='settings')renderBackupStatus();
  return result;
@@ -59,13 +62,20 @@ function renderOrders(){
   const gs=groups(),issues=gs.filter(g=>g.issues.length).length,total=gs.reduce((s,g)=>s+g.total,0),count=gs.reduce((s,g)=>s+g.orders.length,0),cancelledCount=gs.reduce((s,g)=>s+g.cancelled.length,0),liveCount=gs.filter(g=>g.active).length;
   // 每位買家都標了「已取貨」或「未取貨」→ 這一團結束，顯示慶祝
   const allDone=liveCount>0&&!issues&&gs.filter(g=>g.active).every(g=>['pickedUp','noPickup'].includes(progressOf(g,state.progress).stage));
-  $('#view').innerHTML=(page==='home'?heading('把訂單交給團團。','從收單到整理，讓你的每一團井然有序。',addButton(),greeting()):heading('每位買家，一目瞭然。','點一位買家，就能看明細、改訂單、傳訊息。',addButton()))+(page==='home'?`
+  $('#view').innerHTML=(page==='home'?heading('把訂單交給團團。','從收單到整理，讓你的每一團井然有序。',addButton(),greeting()):heading('每位買家，一目瞭然。','點一位買家，就能看明細、改訂單、傳訊息。',addButton()))+(page==='home'?purchaseSection(gs)+`
     <section class="hero"><div><p class="eyebrow">今天也輕鬆整單</p><h2>${count} 筆訂單，<br>已整理成 <strong>${liveCount} 份買家清單。</strong></h2><p>依 Email ＋ 團別合併，保留每一筆加購明細。</p></div><div class="hero-art">${heroArt()}</div></section>
     <div class="stats"><div class="stat"><div class="stat-top">原始訂單${icon('orders')}</div><strong>${count}<small> 筆</small></strong><small>${cancelledCount?`另有 ${cancelledCount} 筆已取消`:'保留完整填單紀錄'}</small></div><div class="stat"><div class="stat-top">合併後清單${icon('people')}</div><strong>${liveCount}<small> 份</small></strong><small>同一買家、同一團合併</small></div><div class="stat"><div class="stat-top">商品總額${icon('box')}</div><strong><small>NT$ </small>${total.toLocaleString()}</strong><small>未含運費與平台費用</small></div><div class="stat ${issues?'warn':'done'}"><div class="stat-top">需要確認${icon(issues?'alert':'check')}</div><strong>${issues}<small> 份</small></strong><small>${issues?'處理後才能匯出':'所有資料已通過檢查'}</small></div></div>`:'')+
     `<div class="section-top"><h2>買家清單<span>每筆加購，都幫你記好</span></h2>${campaignSelect()}</div>${issues?`<div class="alert">${icon('alert')}<span>有 ${issues} 份清單需要你的確認</span><button data-action="review">前往處理 →</button></div>`:''}${allDone?`<div class="celebrate">${emptyArt('done')}<div><b>全部處理完了！</b><p>${campaign==='all'?'每一團':'這一團'}的買家都標好取貨狀態了，辛苦了。</p></div></div>`:''}
     <section class="panel"><div class="tools"><div class="tabs">${[['all','全部'],['ready','可匯出'],['issues','待確認'],['cancelled','有取消']].map(([key,label])=>`<button data-filter="${key}" class="${filter===key?'selected':''}">${label}</button>`).join('')}</div>${stageSelect()}<label class="search">${icon('search')}<input id="search" aria-label="搜尋姓名、Email、手機或商品" placeholder="搜尋姓名、Email、手機或商品" value="${escape(query)}"></label></div><div class="table-head"><span>買家</span><span>訂單明細</span><span>商品合計</span><span>整理狀態</span><span></span></div><div id="rows"></div><div class="table-bottom"><span id="row-count"></span><span>點選買家查看明細 →</span></div></section>`;
   renderRows();
 }
+// 訂購選單：每種商品買家要幾個、跟廠商訂了幾個（自己填）；團團照表單填寫順序（先填先拿）分給買家
+function purchaseSection(gs){
+ const totals=itemTotals(gs);if(!totals.length)return '';
+ return `<section class="card buy-card"><h2>訂購選單</h2><p class="footnote">跟廠商訂了幾個就填幾個，團團會照表單填寫順序（先填先拿）分給買家，買家明細裡會顯示「已訂到」或「還沒訂到」。</p><div class="buy-list">${totals.map(t=>{const key=itemKey(t.campaign,t.item),n=state.purchased[key];return `<div class="buy-row"><div class="buy-name"><b>${escape(t.item)}</b><small>${campaign==='all'?escape(t.campaign)+' · ':''}買家要 <b>${t.quantity.toLocaleString('en-US')}</b> 個${t.pendingQuantity?`（含待確認 ${t.pendingQuantity}）`:''}</small></div><label class="buy-input">已訂<input type="number" inputmode="numeric" min="0" max="10000000" step="1" placeholder="0" data-buy="${escape(key)}" data-need="${t.quantity}" value="${n??''}" aria-label="${escape(t.item)} 已訂幾個"></label><span class="buy-status" data-buy-status="${escape(key)}">${buyStatus(t.quantity,n)}</span></div>`;}).join('')}</div><p class="footnote">已取消的不算；「待確認」的買家也照順序算在內。</p></section>`;
+}
+const buyStatus=(need,n)=>n===undefined?'<span class="muted">還沒填</span>':n<need?`<span class="warn-text">還差 ${(need-n).toLocaleString('en-US')} 個</span>`:n===need?'<span class="ok-text">✓ 剛好夠</span>':`<span class="ok-text">多訂 ${(n-need).toLocaleString('en-US')} 個</span>`;
+const shortWhen=at=>new Date(at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});
 const progressLabel=g=>{const p=progressOf(g,state.progress);return escape(p.label)+(p.changed?'（標記後有變動）':'');};
 const stagePill=g=>{const p=progressOf(g,state.progress);return `<span class="stage st-${p.stage||'none'}${p.changed?' changed':''}" title="${progressLabel(g)}">${stageIcon(p.stage)}${escape(p.label)}</span>`;};
 function claimNotice(gs){
@@ -76,7 +86,7 @@ function claimNotice(gs){
  return `<div class="notice">⚠ 試算表的匯款金額跟團團算的<b>有 ${bad.length} 位不一樣</b>：${[[diff.filter(g=>g.claimed<g.total).length,'少匯'],[diff.filter(g=>g.claimed>g.total).length,'多匯'],[unreadable.length,'金額寫了文字']].filter(([n])=>n).map(([n,t])=>`${t} ${n} 位`).join('、')}；其他 ${gs.length-bad.length} 位一樣。<br>試算表填的合計 ${sum(gs)}${unreadable.length?'（不含寫了文字的）':''}，團團算 ${total}。到訂單頁進度選單選「試算表金額對不上」就能一位一位核對。</div>`;
 }
 function stageSelect(){
- const all=summarize(state.orders,state.overrides),history=noPickupHistory(all,state.progress),gs=groups(),count=stage=>gs.filter(g=>progressOf(g,state.progress).stage===stage).length;
+ const all=allGroups(),history=noPickupHistory(all,state.progress),gs=groups(),count=stage=>gs.filter(g=>progressOf(g,state.progress).stage===stage).length;
  return `<select id="stage-filter" aria-label="依進度篩選"><option value="any">全部進度</option>${[['','未處理'],...stages].map(([key,label])=>`<option value="${key}" ${stageFilter===key?'selected':''}>${label}（${count(key)}）</option>`).join('')}<option value="history" ${stageFilter==='history'?'selected':''}>曾未取貨的買家（${gs.filter(g=>history.has(g.key)).length}）</option>${gs.some(g=>g.claims)?`<option value="claim" ${stageFilter==='claim'?'selected':''}>試算表金額對不上（${gs.filter(g=>g.claimIssue).length}）</option>`:''}</select>`;
 }
 // 搜尋姓名、Email、手機（可含空白或連字號）或商品名稱
@@ -84,25 +94,28 @@ function stageSelect(){
 const initials=name=>{const t=String(name).replace(/[^\p{L}\p{N}]/gu,'');return /^[\x00-\x7f]+$/.test(t)?t.slice(0,2).toUpperCase():(t||String(name)).slice(-2);};
 const matches=g=>{const q=query.trim().toLowerCase();if(!q)return true;const phone=cleanPhone(q);return [g.name,g.email,g.phone,...[...g.orders,...g.cancelled].map(o=>o.item)].join(' ').toLowerCase().includes(q)||/^\d{3,}$/.test(phone)&&g.phone.includes(phone);};
 function renderRows(){
-  const history=noPickupHistory(summarize(state.orders,state.overrides),state.progress);
+  const history=noPickupHistory(allGroups(),state.progress);
   const stageMatch=g=>stageFilter==='any'||(stageFilter==='history'?history.has(g.key):stageFilter==='claim'?g.claimIssue:progressOf(g,state.progress).stage===stageFilter);
   const gs=groups().filter(g=>stageMatch(g)&&({all:true,ready:g.active&&!g.issues.length,issues:g.issues.length>0,cancelled:g.cancelled.length>0})[filter]&&matches(g));
-  $('#rows').innerHTML=gs.length?gs.map(g=>`<button class="order-row" data-detail="${escape(g.key)}"><span class="buyer"><span class="avatar">${escape(initials(g.name))}</span><span><b>${escape(g.name)}</b><small>${escape(g.email)}</small>${progressOf(g,state.progress).stage?`<small class="mobile-only">${stagePill(g)}</small>`:''}${history.has(g.key)?`<small class="warn-text">⚠ 曾未取貨 ${history.get(g.key).length} 次</small>`:''}</span></span><span class="meta">${g.active?`${g.orders.length} 筆訂單 · ${g.quantity} 件`:'全部已取消'}${g.cancelled.length&&g.active?` · 取消 ${g.cancelled.length}`:''}<small>${escape(g.campaign)}</small>${stagePill(g)}</span><span class="amount">$${g.total.toLocaleString()}</span><span class="badge ${g.issues.length?'amber':g.active?'':'neutral'}">${g.issues.length?'待確認 '+g.issues.length+' 項':g.active?'✓ 可匯出':'已取消'}</span><span class="arrow">${icon('arrow')}</span></button>`).join(''):!state.orders.length?`<div class="empty">${emptyArt('orders')}<b>還沒有訂單</b>到「資料來源」匯入表單，或按「新增訂單」。</div>`
+  $('#rows').innerHTML=gs.length?gs.map(g=>`<button class="order-row" data-detail="${escape(g.key)}"><span class="buyer"><span class="avatar">${escape(initials(g.name))}</span><span><b>${escape(g.name)}</b><small>${escape(g.email)}</small>${progressOf(g,state.progress).stage?`<small class="mobile-only">${stagePill(g)}</small>`:''}${history.has(g.key)?`<small class="warn-text">⚠ 曾未取貨 ${history.get(g.key).length} 次</small>`:''}</span></span><span class="meta">${g.active?`${g.orders.length} 筆訂單 · ${g.quantity} 件`:'全部已取消'}${g.cancelled.length&&g.active?` · 取消 ${g.cancelled.length}`:''}${g.active&&g.orders.some(o=>state.shipped[o.id])?` · 已寄出 ${g.orders.filter(o=>state.shipped[o.id]).length}/${g.orders.length}`:''}<small>${escape(g.campaign)}</small>${stagePill(g)}</span><span class="amount">$${g.total.toLocaleString()}</span><span class="badge ${g.issues.length?'amber':g.active?'':'neutral'}">${g.issues.length?'待確認 '+g.issues.length+' 項':g.active?'✓ 可匯出':'已取消'}</span><span class="arrow">${icon('arrow')}</span></button>`).join(''):!state.orders.length?`<div class="empty">${emptyArt('orders')}<b>還沒有訂單</b>到「資料來源」匯入表單，或按「新增訂單」。</div>`
    :filter==='issues'&&!query.trim()&&stageFilter==='any'?`<div class="empty">${emptyArt('done')}<b>都確認好了！</b>沒有需要你處理的買家。</div>`
    :`<div class="empty">${emptyArt('search')}<b>沒有符合的買家</b>換個篩選或搜尋字試試看。</div>`;
   $('#row-count').textContent=`顯示 ${gs.length} 份買家清單`;
 }
 function detail(key){
- const g=summarize(state.orders,state.overrides).find(g=>g.key===key);if(!g)return;
- modal(g.name+' 的訂單',`<span class="badge neutral">${escape(g.campaign)}</span><p class="footnote">${escape(g.email)} · ${escape(g.phone)}<br>取貨門市：${escape(g.store||'尚待確認')}</p><div class="detail-stats"><div><small>商品合計</small><b>${money(g.total)}</b></div><div><small>已付金額</small><b>${money(g.paid)}</b></div><div><small>待付金額</small><b>${money(g.balance)}</b></div></div>${g.claims?`<p class="footnote">買家填的匯款金額：${g.unreadable.length?escape(g.unreadable.join('、'))+(g.claimed?`＋${money(g.claimed)}`:''):money(g.claimed)}（只用來核對，不算已付）${g.claimChecked?`<br>✓ 已核對差額（${escape(new Date(state.overrides[key].claimedChecked.at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}))}）`:''}</p>`:''}<button class="secondary" data-message="${escape(key)}">產生給買家的訊息</button>${progressBox(g)}${g.orders.map(o=>`<div class="detail-item"><div><span>${escape(o.item)} × ${o.quantity}</span><b>${money(o.price*o.quantity)}</b></div><small>${escape(o.store||'未填門市')} · 本筆已付 ${money(o.paid)}</small>${o.source?`<details><summary>查看匯入原始列</summary><p class="footnote">來源：${escape(o.source.name)}<br>識別碼：${escape(o.source.rowId)}</p>${o.source.headers.map((header,index)=>`<p class="footnote">${escape(header)}：${escape(o.source.values[index])}</p>`).join('')}</details>`:''}<div class="item-actions"><button class="secondary" data-edit="${escape(o.id)}">修改這筆</button><button class="secondary danger" data-cancel="${escape(o.id)}">取消這筆</button></div></div>`).join('')||'<p class="footnote">這位買家在此團的商品都已取消。</p>'}${g.cancelled.length?`<h3 class="cancelled-head">已取消 ${g.cancelled.length} 筆<small>不計入金額與匯出，原始資料保留</small></h3>${g.cancelled.map(o=>`<div class="detail-item cancelled"><div><span>${escape(o.item)} × ${o.quantity}</span><b>${money(o.price*o.quantity)}</b></div><small>${escape(new Date(o.cancelledAt).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}))} 取消 · 本筆已付 ${money(o.paid)}</small><div class="item-actions"><button class="secondary" data-restore="${escape(o.id)}">恢復這筆</button></div></div>`).join('')}`:''}${g.issues.length?`<div class="resolve"><b>需要確認</b><p>${g.issues.map(escape).join('<br>')}</p>${g.stores.length&&g.issues.some(i=>i.includes('門市'))?`<label class="field">本次合單使用的門市<select id="resolved-store">${g.stores.map(s=>`<option value="${escape(s)}">${escape(s)}</option>`).join('')}</select></label><button class="secondary" data-store="${escape(key)}">確認使用此門市</button>`:''}${g.issues.includes('疑似重複填單')?`<p>請先確認是加購，還是重複送出。兩筆目前都計入金額。</p><button class="secondary" data-duplicate="${escape(key)}">確認都是有效加購</button>`:''}${g.cancelledPaid&&!state.overrides[key]?.refundChecked?`<p>取消不會自動退款。請先退款給買家，或把這筆款項改填到其他商品，再按下方按鈕。</p><button class="secondary" data-refund="${escape(key)}">已核對退款</button>`:''}${g.claimIssue?`<p>請對一下匯款紀錄。如果是之後補尾款、或已經跟買家講好，可以按下方按鈕放行，團團會記下核對時間。買家原本填的內容在上面「查看匯入原始列」。</p><button class="secondary" data-claimed="${escape(key)}">已核對匯款金額</button>`:''}</div>`:(g.active?'<p class="footnote">✓ 資料檢查完成，可以匯出整理摘要。</p>':'')}<p class="footnote">商品金額未含運費。「已付」是手動紀錄，尚未連接付款系統。</p>`);
+ const g=allGroups().find(g=>g.key===key);if(!g)return;
+ const got=allocatePurchased(state.orders,state.purchased),stage=progressOf(g,state.progress).stage;
+ const buyTag=o=>!got.has(o.id)?'':got.get(o.id)===o.quantity?'<span class="tag ok">✓ 已訂到</span>':got.get(o.id)?`<span class="tag warn">已訂到 ${got.get(o.id)}／${o.quantity}</span>`:'<span class="tag warn">還沒訂到</span>';
+ const allShipped=g.active&&g.orders.every(o=>state.shipped[o.id]);
+ modal(g.name+' 的訂單',`<span class="badge neutral">${escape(g.campaign)}</span><p class="footnote">${escape(g.email)} · ${escape(g.phone)}<br>${g.noStore&&!g.store?`取貨：這團不用門市（面交／另寄） <button class="link" data-needstore="${escape(g.campaign)}" data-key="${escape(key)}">改回需要門市</button>`:`取貨門市：${escape(g.store||'尚待確認')}`}</p><div class="detail-stats"><div><small>商品合計</small><b>${money(g.total)}</b></div><div><small>已付金額</small><b>${money(g.paid)}</b></div><div><small>待付金額</small><b>${money(g.balance)}</b></div></div>${g.claims?`<p class="footnote">買家填的匯款金額：${g.unreadable.length?escape(g.unreadable.join('、'))+(g.claimed?`＋${money(g.claimed)}`:''):money(g.claimed)}（只用來核對，不算已付）${g.claimChecked?`<br>✓ 已核對差額（${escape(new Date(state.overrides[key].claimedChecked.at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}))}）`:''}</p>`:''}<button class="secondary" data-message="${escape(key)}">產生給買家的訊息</button>${progressBox(g)}${allShipped&&!['shipped','pickedUp','noPickup'].includes(stage)?`<div class="notice ok">商品都標成已寄出了。<button class="secondary" data-stage="shipped" data-key="${escape(key)}">把進度標成「已寄出」</button></div>`:''}${g.orders.map(o=>`<div class="detail-item"><div><span>${escape(o.item)} × ${o.quantity}</span><b>${money(o.price*o.quantity)}</b></div><small>${escape(o.store||(g.noStore?'不用門市':'未填門市'))} · 本筆已付 ${money(o.paid)}</small>${buyTag(o)||state.shipped[o.id]?`<div class="item-tags">${buyTag(o)}${state.shipped[o.id]?`<span class="tag ok">已寄出 ${escape(shortWhen(state.shipped[o.id]))}</span>`:''}</div>`:''}${o.source?`<details><summary>查看匯入原始列</summary><p class="footnote">來源：${escape(o.source.name)}<br>識別碼：${escape(o.source.rowId)}</p>${o.source.headers.map((header,index)=>`<p class="footnote">${escape(header)}：${escape(o.source.values[index])}</p>`).join('')}</details>`:''}<div class="item-actions"><button class="secondary ship${state.shipped[o.id]?' on':''}" data-ship="${escape(o.id)}" aria-pressed="${!!state.shipped[o.id]}">${state.shipped[o.id]?'✓ 已寄出（再按取消）':'已寄出'}</button><button class="secondary" data-edit="${escape(o.id)}">修改這筆</button><button class="secondary danger" data-cancel="${escape(o.id)}">取消這筆</button></div></div>`).join('')||'<p class="footnote">這位買家在此團的商品都已取消。</p>'}${g.cancelled.length?`<h3 class="cancelled-head">已取消 ${g.cancelled.length} 筆<small>不計入金額與匯出，原始資料保留</small></h3>${g.cancelled.map(o=>`<div class="detail-item cancelled"><div><span>${escape(o.item)} × ${o.quantity}</span><b>${money(o.price*o.quantity)}</b></div><small>${escape(new Date(o.cancelledAt).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}))} 取消 · 本筆已付 ${money(o.paid)}</small><div class="item-actions"><button class="secondary" data-restore="${escape(o.id)}">恢復這筆</button></div></div>`).join('')}`:''}${g.issues.length?`<div class="resolve"><b>需要確認</b><p>${g.issues.map(escape).join('<br>')}</p>${g.stores.length&&g.issues.some(i=>i.includes('門市'))?`<label class="field">本次合單使用的門市<select id="resolved-store">${g.stores.map(s=>`<option value="${escape(s)}">${escape(s)}</option>`).join('')}</select></label><button class="secondary" data-store="${escape(key)}">確認使用此門市</button>`:''}${g.issues.some(i=>i.includes('門市'))?`<p>這團是面交或另外寄送、不用取貨門市的話：</p><button class="secondary" data-nostore="${escape(g.campaign)}" data-key="${escape(key)}">這團都不用門市</button>`:''}${g.issues.includes('疑似重複填單')?`<p>請先確認是加購，還是重複送出。兩筆目前都計入金額。</p><button class="secondary" data-duplicate="${escape(key)}">確認都是有效加購</button>`:''}${g.cancelledPaid&&!state.overrides[key]?.refundChecked?`<p>取消不會自動退款。請先退款給買家，或把這筆款項改填到其他商品，再按下方按鈕。</p><button class="secondary" data-refund="${escape(key)}">已核對退款</button>`:''}${g.claimIssue?`<p>請對一下匯款紀錄。如果是之後補尾款、或已經跟買家講好，可以按下方按鈕放行，團團會記下核對時間。買家原本填的內容在上面「查看匯入原始列」。</p><button class="secondary" data-claimed="${escape(key)}">已核對匯款金額</button>`:''}</div>`:(g.active?'<p class="footnote">✓ 資料檢查完成，可以匯出整理摘要。</p>':'')}<p class="footnote">商品金額未含運費。「已付」是手動紀錄，尚未連接付款系統。</p>`);
 }
 function progressBox(g){
- const p=progressOf(g,state.progress),hits=noPickupHistory(summarize(state.orders,state.overrides),state.progress).get(g.key)||[];
+ const p=progressOf(g,state.progress),hits=noPickupHistory(allGroups(),state.progress).get(g.key)||[];
  return `<div class="progress-box"><b>進度</b><div class="stage-buttons">${[['','未處理'],...stages].map(([key,label])=>`<button class="chip st-${key||'none'} ${p.stage===key?'selected':''}" data-stage="${key}" data-key="${escape(g.key)}" aria-pressed="${p.stage===key}">${stageIcon(key)}${label}</button>`).join('')}</div><small>${p.stage?`${escape(when(p.at))} 標記為「${escape(p.label)}」`:'還沒標記。進度是你自己的紀錄，不會通知買家或賣貨便。'}</small>${p.changed?'<p class="warn-text">⚠ 標記之後，這位買家的商品數量或金額有變動，請再確認一次。</p>':''}${hits.length?`<p class="warn-text">⚠ 同一個人（Email 或手機相同）曾在 ${hits.map(h=>`「${escape(h.campaign)}」`).join('、')} 被標記未取貨，可考慮先收款再出貨。</p>`:''}</div>`;
 }
 // 設定進度；存不進本機就退回。stay=true 時留在目前視窗（例如訊息視窗）
 function setStage(key,stage,stay=false){
- const g=summarize(state.orders,state.overrides).find(g=>g.key===key);if(!g)return;
+ const g=allGroups().find(g=>g.key===key);if(!g)return;
  const before=state.progress[key];
  if(stage)state.progress[key]={stage,at:new Date().toISOString(),signature:groupSignature(g)};else delete state.progress[key];
  if(!save()){if(before)state.progress[key]=before;else delete state.progress[key];return;}
@@ -110,7 +123,7 @@ function setStage(key,stage,stay=false){
  if(stay)toast(`已標記為「${progressOf(g,state.progress).label}」。`);else detail(key);
 }
 function messageModal(key){
- const g=summarize(state.orders,state.overrides).find(g=>g.key===key);if(!g)return;
+ const g=allGroups().find(g=>g.key===key);if(!g)return;
  let note='';try{note=localStorage.getItem(messageNoteKey)||'';}catch{}
  modal('給 '+g.name+' 的訊息',`<p class="footnote">可以直接修改下方文字，再按「複製」貼到 LINE 或簡訊。金額是團團裡的手動紀錄；送出前請自己看過一次。</p><label class="field">固定附註（例如匯款帳號、取貨期限；會記住，之後每位買家都會帶上）<textarea id="message-note" rows="2" maxlength="500">${escape(note)}</textarea></label><label class="field">訊息內容<textarea id="buyer-message" data-key="${escape(key)}" rows="12">${escape(buyerMessage(g,note))}</textarea></label><div id="message-error" class="error" role="alert"></div><div class="form-actions"><button class="secondary" data-detail="${escape(key)}">返回明細</button>${progressOf(g,state.progress).stage?'':`<button class="secondary" data-stage="notified" data-key="${escape(key)}" data-stay="1">送出後標記「已通知」</button>`}<button class="primary" data-action="copy-message">複製訊息</button></div>`);
 }
@@ -180,7 +193,7 @@ async function googleSync(manual=false){
    if(plan.added){
     if($('#dialog').open&&!manual)throw new Error('有視窗開著，這次先不加，關掉視窗後下一輪會自動加。');
     await runAutoBackup('before');
-    state=restoreBackup(localStorage,state,plan.next);scheduleAutoBackup();
+    plan.next.updatedAt=new Date().toISOString();state=restoreBackup(localStorage,state,plan.next);scheduleAutoBackup();
     last.added=plan.added;render();
     toast(`Google 表單有新訂單：加入 ${plan.added} 筆商品（${money(plan.total)}）。`);
    }
@@ -254,14 +267,21 @@ function googleMappingDefaults(){
  const saved=googleSetup.saved;
  if(saved){try{const back=namesToMapping(importTable.headers,saved);for(const [key,index] of Object.entries(back.mapping))if(key!=='rowId'&&$('#map-'+key))$('#map-'+key).value=String(index);if(saved.defaultCampaign)$('#import-campaign').value=saved.defaultCampaign;if(back.products.length){$('#import-mapping').classList.add('multi');document.querySelector('[name=import-mode][value=multi]').checked=true;$('#product-rows').innerHTML=back.products.map(productRow).join('');}}catch{}}
 }
+// 手機：跳出分享選單（儲存到檔案、LINE、AirDrop）；不支援或分享失敗就照舊下載
+async function shareFile(filename,text,type){
+ if(!/iPhone|iPad|iPod|Android/.test(navigator.userAgent)||!navigator.canShare)return null;
+ const file=new File([text],filename,{type:type.split(';')[0]});
+ if(!navigator.canShare({files:[file]}))return null;
+ try{await navigator.share({files:[file]});return {shared:true};}catch(error){return error?.name==='AbortError'?{canceled:true}:null;}
+}
 function download(filename,text,type){const url=URL.createObjectURL(new Blob([text],{type}));const a=document.createElement('a');a.href=url;a.download=filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);}
 // 回傳 {ok:true,path} 已存好並讀回核對；{canceled:true} 使用者取消；{error} 失敗；{browser:true} 網頁版交給瀏覽器下載，無法確認是否存好
 async function saveFile(filename,text,type){
  const desktop=globalThis.tuantuanDesktop;
- if(!desktop?.saveFile){download(filename,text,type);return {browser:true};}
+ if(!desktop?.saveFile){const shared=await shareFile(filename,text,type);if(shared)return shared;download(filename,text,type);return {browser:true};}
  try{return await desktop.saveFile(filename,text);}catch(error){return {error:error.message||'未知錯誤'};}
 }
-function saveMessage(result,what){return result.ok?`${what}已存到：${result.path}`:result.canceled?`已取消，${what}沒有存檔。`:result.browser?`已交給瀏覽器下載${what}，請到下載清單確認。`:`${what}存檔失敗：${result.error}`;}
+function saveMessage(result,what){return result.ok?`${what}已存到：${result.path}`:result.canceled?`已取消，${what}沒有存檔。`:result.shared?`已打開分享選單，${what}可以「儲存到檔案」或傳到 LINE。`:result.browser?`已交給瀏覽器下載${what}，請到下載清單確認。`:`${what}存檔失敗：${result.error}`;}
 // 取消／恢復只改狀態；存不進本機就整個退回，不留下一半的變更。
 // 仍然有效的人工確認保留：門市仍在有效訂單中、取消不會產生新重複、退款核對在已取消付款沒增加時。
 function setCancelled(id,cancelled){
@@ -280,7 +300,7 @@ function setCancelled(id,cancelled){
 }
 document.addEventListener('input',event=>{
  if(event.target.id==='search'){query=event.target.value;renderRows();}
- if(event.target.id==='message-note'){const note=event.target.value,box=$('#buyer-message'),g=summarize(state.orders,state.overrides).find(g=>g.key===box.dataset.key);try{localStorage.setItem(messageNoteKey,note);}catch{}if(g)box.value=buyerMessage(g,note);}
+ if(event.target.id==='message-note'){const note=event.target.value,box=$('#buyer-message'),g=allGroups().find(g=>g.key===box.dataset.key);try{localStorage.setItem(messageNoteKey,note);}catch{}if(g)box.value=buyerMessage(g,note);}
 });
 document.addEventListener('change',async event=>{
  if(event.target.id==='import-sheet'){try{showImportMapping();}catch(error){$('#import-error').textContent=error.message;}}
@@ -304,6 +324,15 @@ document.addEventListener('change',async event=>{
   }catch(error){const output=$('#import-error');if(output)output.textContent='無法匯入：'+error.message;}
  }
 
+ // 訂購選單填「已訂幾個」：空白＝還沒填；只更新旁邊的狀態，不重畫整頁（才不會跳掉正在打的格子）
+ if(event.target.dataset.buy!==undefined){
+  const input=event.target,key=input.dataset.buy,raw=input.value.trim(),n=Number(raw),before=state.purchased[key];
+  if(raw&&(!Number.isSafeInteger(n)||n<0||n>10000000)){toast('已訂數量要填 0 以上的整數');input.value=before??'';return;}
+  if(raw)state.purchased[key]=n;else delete state.purchased[key];
+  if(!save()){if(before===undefined)delete state.purchased[key];else state.purchased[key]=before;input.value=before??'';return;}
+  const status=[...document.querySelectorAll('[data-buy-status]')].find(el=>el.dataset.buyStatus===key);
+  if(status)status.innerHTML=buyStatus(Number(input.dataset.need),state.purchased[key]);
+ }
  if(event.target.id==='campaign'){campaign=event.target.value;render();}
  if(event.target.id==='stage-filter'){stageFilter=event.target.value;renderRows();}
  if(event.target.id==='backup-file'){
@@ -311,15 +340,18 @@ document.addEventListener('change',async event=>{
   const input=event.target;
   try{
    if(file.size>MAX_BACKUP_BYTES)throw new Error('備份超過 5 MB');
-   const candidate=parseBackup(await file.text());
-   if(input.isConnected&&$('#dialog').open)previewRestore(candidate);
+   const {state:candidate,savedAt,savedBy}=parseBackupFile(await file.text());
+   if(input.isConnected&&$('#dialog').open)previewRestore(candidate,{savedAt,savedBy});
   }catch(error){if(input.isConnected)$('#restore-error').textContent=error.message;}
  }
 });
-function previewRestore(candidate){
+function previewRestore(candidate,meta={}){
  pendingRestore=candidate;
- const gs=summarize(candidate.orders,candidate.overrides);
- modal('確認還原備份',`<p>備份內有 <b>${candidate.orders.length} 筆訂單</b>、${gs.length} 份買家清單，商品總額 ${money(gs.reduce((sum,g)=>sum+g.total,0))}。</p><p>將取代目前 ${state.orders.length} 筆訂單，以及全部確認與下載紀錄。這不是加購匯入。</p><p class="footnote">確認後先保存還原前資料；若本機空間不足，會停止還原。只保留最近一次回復點。</p><div id="restore-error" class="error" role="alert" style="white-space:pre-wrap"></div><div class="form-actions"><button class="secondary" data-action="close">取消</button><button class="primary" data-action="confirm-restore">確認取代並還原</button></div>`);
+ const gs=summarize(candidate.orders,candidate.overrides,candidate.noStore);
+ const by={desktop:'電腦版',web:'手機／網頁版'}[meta.savedBy]||'團團',theirs=candidate.updatedAt||meta.savedAt,mine=state.updatedAt;
+ const older=theirs&&mine&&Date.parse(theirs)<Date.parse(mine);
+ const times=`<p>${meta.savedAt?`這份備份是 <b>${escape(when(meta.savedAt))}</b> 從${by}存的。`:'這份備份沒有記錄存檔時間（舊版團團存的）。'}${candidate.updatedAt?`<br>裡面的資料最後修改：${escape(when(candidate.updatedAt))}`:''}${mine?`<br>這台目前的資料最後修改：${escape(when(mine))}`:''}</p>${older?'<div class="notice">⚠ 這份備份比這台現有的資料舊。還原後，這台比較新的修改會不見。</div>':''}`;
+ modal('確認還原備份',`${times}<p>備份內有 <b>${candidate.orders.length} 筆訂單</b>、${gs.length} 份買家清單，商品總額 ${money(gs.reduce((sum,g)=>sum+g.total,0))}。</p><p>將取代目前 ${state.orders.length} 筆訂單，以及全部確認與下載紀錄。這不是加購匯入。</p><p class="footnote">確認後先保存還原前資料；若本機空間不足，會停止還原。只保留最近一次回復點。</p><div id="restore-error" class="error" role="alert" style="white-space:pre-wrap"></div><div class="form-actions"><button class="secondary" data-action="close">取消</button><button class="primary" data-action="confirm-restore">確認取代並還原</button></div>`);
 }
 document.addEventListener('submit',event=>{
  if(event.target.id!=='order-form')return;event.preventDefault();
@@ -345,9 +377,11 @@ document.addEventListener('click',async event=>{
  if('stage' in button.dataset){setStage(button.dataset.key,button.dataset.stage,!!button.dataset.stay);if(button.dataset.stay){button.disabled=true;button.textContent='✓ 已標記已通知';}return;}
  if(button.dataset.store){const key=button.dataset.store;state.overrides[key]={...state.overrides[key],store:$('#resolved-store').value};save();render();detail(key);return;}
  if(button.dataset.duplicate){const key=button.dataset.duplicate;state.overrides[key]={...state.overrides[key],duplicateConfirmed:true};save();render();detail(key);return;}
- if(button.dataset.claimed){const key=button.dataset.claimed,g=summarize(state.orders,state.overrides).find(g=>g.key===key);if(!g)return;state.overrides[key]={...state.overrides[key],claimedChecked:{claimed:g.claimed,total:g.total,unreadable:g.unreadable.length,at:new Date().toISOString()}};save();render();detail(key);return;}
+ if(button.dataset.claimed){const key=button.dataset.claimed,g=allGroups().find(g=>g.key===key);if(!g)return;state.overrides[key]={...state.overrides[key],claimedChecked:{claimed:g.claimed,total:g.total,unreadable:g.unreadable.length,at:new Date().toISOString()}};save();render();detail(key);return;}
  if(button.dataset.refund){const key=button.dataset.refund;state.overrides[key]={...state.overrides[key],refundChecked:true};save();render();detail(key);return;}
  if(button.dataset.cancel){const o=state.orders.find(o=>o.id===button.dataset.cancel);if(!o)return;const key=summarize([o])[0].key;modal('取消這筆商品？',`<p><b>${escape(o.item)} × ${o.quantity}</b>（${money(o.price*o.quantity)}）</p><p>取消後不計入件數、金額與匯出。原始資料會保留，之後可以在買家明細「恢復這筆」。</p>${o.paid?`<div class="notice">這筆已付 ${money(o.paid)}。取消<b>不會自動退款</b>，之後要核對退款才能匯出這位買家。</div>`:''}<div class="form-actions"><button class="secondary" data-detail="${escape(key)}">返回</button><button class="primary" data-confirm-cancel="${escape(o.id)}">確認取消</button></div>`);return;}
+ if(button.dataset.ship){const o=state.orders.find(o=>o.id===button.dataset.ship);if(!o)return;const key=summarize([o])[0].key,before=state.shipped[o.id];if(before)delete state.shipped[o.id];else state.shipped[o.id]=new Date().toISOString();if(!save()){if(before)state.shipped[o.id]=before;else delete state.shipped[o.id];}render();detail(key);toast(before?'已改回「還沒寄出」。':`「${o.item}」標記為已寄出。`);return;}
+ if(button.dataset.nostore||button.dataset.needstore){const name=button.dataset.nostore||button.dataset.needstore,on=!!button.dataset.nostore,before=[...state.noStore];state.noStore=on?[...new Set([...state.noStore,name])]:state.noStore.filter(c=>c!==name);if(!save())state.noStore=before;render();detail(button.dataset.key);toast(on?`「${name}」整團改成不用門市，不會再提醒缺門市；可在買家明細改回。`:`「${name}」改回需要取貨門市。`);return;}
  if(button.dataset.confirmCancel){setCancelled(button.dataset.confirmCancel,true);return;}
  if(button.dataset.restore){setCancelled(button.dataset.restore,false);return;}
  switch(button.dataset.action){
@@ -363,12 +397,12 @@ document.addEventListener('click',async event=>{
   case 'google-disconnect':modal('中斷 Google 連接？',`<p>團團會請 Google 作廢這次的登入，並刪掉這台電腦裡的鑰匙檔，之後不再自動更新。</p><p>已經加進來的訂單<b>不會</b>被刪掉。要再用就重新做一次設定。</p><div class="form-actions"><button class="secondary" data-action="close">取消</button><button class="primary" data-action="confirm-google-disconnect">確認中斷</button></div>`);break;
   case 'confirm-google-disconnect':{await desktop.googleDisconnect();saveGoogleConfig(null);startGoogleTimer();$('#dialog').close();page='sources';render();toast('已中斷 Google 連接。');break;}
   case 'google-info':modal('Google 表單回覆如何匯入',`<ol class="steps"><li>使用表單擁有者帳號開啟表單，切到「回覆」。</li><li>點右上角更多選單，選「下載回覆（.csv）」；若下載為壓縮檔，先解壓縮取出 CSV。</li><li>也可點「連結至試算表」，從試算表的「檔案 → 下載」取得 Microsoft Excel（.xlsx）。</li><li>回到團團的「資料來源」，選擇 Excel／CSV，對應欄位、指定固定來源名稱與團別。</li><li>以唯一識別碼或時間戳記辨認每列，先預覽再確認匯入；下次沿用來源名稱與識別碼。</li></ol><div class="notice">目前是手動下載再匯入，不會自動同步 Google。表單填寫網址不能讀取回覆；多商品表單需每種商品各有一個數量欄。</div>`);break;
-  case 'download':{const ready=groups().filter(g=>g.active&&!g.issues.length);if(!ready.length)return;button.disabled=true;const result=await saveFile('團團-整單摘要-非賣貨便匯入檔.csv',summaryCsv(ready),'text/csv;charset=utf-8');if(result.ok||result.browser){state.history.unshift({at:new Date().toISOString(),count:ready.length});save();}renderExport();toast(saveMessage(result,'整單摘要'));break;}
-  case 'download-items':{const totals=itemTotals(groups());if(!totals.length)return;button.disabled=true;const result=await saveFile('團團-叫貨統計.csv',itemTotalsCsv(totals),'text/csv;charset=utf-8');button.disabled=false;toast(saveMessage(result,'叫貨統計'));break;}
+  case 'download':{const ready=groups().filter(g=>g.active&&!g.issues.length);if(!ready.length)return;button.disabled=true;const result=await saveFile('團團-整單摘要-非賣貨便匯入檔.csv',summaryCsv(ready),'text/csv;charset=utf-8');if(result.ok||result.browser||result.shared){state.history.unshift({at:new Date().toISOString(),count:ready.length});save();}renderExport();toast(saveMessage(result,'整單摘要'));break;}
+  case 'download-items':{const totals=itemTotals(groups());if(!totals.length)return;button.disabled=true;const result=await saveFile('團團-叫貨統計.csv',itemTotalsCsv(totals,state.purchased),'text/csv;charset=utf-8');button.disabled=false;toast(saveMessage(result,'叫貨統計'));break;}
   case 'copy-message':{const box=$('#buyer-message');if(await copyText(box)){toast('已複製，可以貼到 LINE 或簡訊。');$('#message-error').textContent='';}else{box.select();$('#message-error').textContent='無法自動複製，文字已全選，請按 Ctrl+C（手機長按）複製。';}break;}
   case 'open-backup-dir':{const result=await desktop.openBackupDir();if(result.error)toast('無法打開備份資料夾：'+result.error);break;}
   case 'choose-backup-dir':{const result=await desktop.chooseBackupDir();if(result.error){toast('無法使用這個位置：'+result.error);break;}if(result.canceled)break;backupStatus={};const saved=await runAutoBackup();renderBackupStatus();if(!saved.error)toast('之後的自動備份會存到：'+result.dir);break;}
-  case 'backup':{button.disabled=true;const result=await saveFile('團團-本機資料備份.json',JSON.stringify({...state,schemaVersion:SCHEMA_VERSION},null,2),'application/json');button.disabled=false;toast(saveMessage(result,'備份'));break;}
+  case 'backup':{button.disabled=true;const now=new Date(),pad=n=>String(n).padStart(2,'0'),stamp=`${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;const result=await saveFile(`團團-備份-${stamp}.json`,backupText(state,desktop?'desktop':'web',now),'application/json');button.disabled=false;toast(saveMessage(result,'備份'));break;}
   case 'show-campaign-column':campaignColumn(true);$('#map-campaign')?.focus();break;
   case 'import-file':importPlan=null;modal('匯入 Excel／CSV',`<p>第一列需為欄位名稱。可一列一項商品，或一列多項商品；公式請先貼上為值，手機請保留開頭的 0。</p><label class="field">選擇檔案<input id="import-file-input" type="file" accept=".xlsx,.csv"></label><div id="import-error" class="error" role="alert" style="white-space:pre-wrap"></div>`);break;
   case 'preview-import':{
@@ -398,7 +432,7 @@ document.addEventListener('click',async event=>{
    const known=new Set(state.orders.map(o=>o.id));
    if(importPlan.added){
     await runAutoBackup('before');
-    try{state=restoreBackup(localStorage,state,importPlan.next);scheduleAutoBackup();}catch{$('#import-error').textContent='匯入未完成，原訂單未變更。請確認本機儲存空間。';break;}
+    try{importPlan.next.updatedAt=new Date().toISOString();state=restoreBackup(localStorage,state,importPlan.next);scheduleAutoBackup();}catch{$('#import-error').textContent='匯入未完成，原訂單未變更。請確認本機儲存空間。';break;}
    }
    if(googleSetup){
     const names=mappingToNames(importTable.headers,importPlan.mapping,importPlan.products);
@@ -420,7 +454,7 @@ document.addEventListener('click',async event=>{
    pendingRestore=null;campaign='all';filter='all';query='';$('#dialog').close();page='home';render();toast('備份已還原；可在設定回復還原前資料。');break;
   }
   case 'clear':case 'reset':{const reset=button.dataset.action==='reset';modal(reset?'重設示範資料？':'清空本機訂單？',`<p>目前訂單、確認紀錄、進度與下載紀錄將被取代。${desktop?.autoBackup?'團團會先自動存一份「變更前」備份。':'請先到設定下載備份。'}</p><div id="clear-error" class="error" role="alert"></div><div class="form-actions"><button class="secondary" data-action="close">取消</button><button class="primary" data-action="${reset?'confirm-reset':'confirm-clear'}">確認${reset?'重設':'清空'}</button></div>`);break;}
-  case 'confirm-reset':case 'confirm-clear':{const demo=button.dataset.action==='confirm-reset';button.disabled=true;const backup=await runAutoBackup('before');if(backup.error){button.disabled=false;$('#clear-error').textContent='變更前備份失敗，所以沒有清空：'+backup.error+'。請先到設定下載備份或更換備份位置。';break;}state={schemaVersion:SCHEMA_VERSION,orders:demo?structuredClone(demoOrders):[],overrides:{},history:[],demo,progress:{}};save();campaign='all';filter='all';query='';$('#dialog').close();page='home';render();break;}
+  case 'confirm-reset':case 'confirm-clear':{const demo=button.dataset.action==='confirm-reset';button.disabled=true;const backup=await runAutoBackup('before');if(backup.error){button.disabled=false;$('#clear-error').textContent='變更前備份失敗，所以沒有清空：'+backup.error+'。請先到設定下載備份或更換備份位置。';break;}state=emptyState(demo);save();campaign='all';filter='all';query='';$('#dialog').close();page='home';render();break;}
  }
 });
 document.querySelector('.brandmark').innerHTML=logo();document.querySelector('.mobile-brand i').innerHTML=logo();
