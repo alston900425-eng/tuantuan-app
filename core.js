@@ -139,3 +139,28 @@ export function noPickupHistory(groups,progress={}){
   }
   return result;
 }
+// 賺多少：收入＝有效訂單的單價×數量（買家該付的商品金額，不是已收到的錢，未含運費）；
+// 成本＝每件成本×件數＋這團的其他花費。costs[itemKey]＝每件成本（沒填的商品成本先算 0，另外回報 missing）；
+// expenses＝[{id,campaign,label,amount}]；dates[團別]＝開團日期 YYYY-MM-DD。
+// 團的順序：有填開團日期的照日期，沒填的排後面、照匯入先後（訂單清單裡第一次出現的順序）。
+export function profitReport(orders,groups,{costs={},expenses=[],dates={}}={}){
+  const order=[...new Set(orders.map(o=>o.campaign.trim()))];
+  const totals=itemTotals(groups),map=new Map();
+  for(const g of groups){const c=g.campaign.trim();if(!map.has(c))map.set(c,{campaign:c,items:[],expenses:[]});}
+  for(const t of totals){
+    const unit=costs[itemKey(t.campaign,t.item)],costTotal=(unit??0)*t.quantity;
+    map.get(t.campaign).items.push({item:t.item,quantity:t.quantity,amount:t.amount,prices:t.prices,cost:unit,costTotal,profit:t.amount-costTotal});
+  }
+  for(const e of expenses||[]){const c=map.get(String(e.campaign).trim());if(c)c.expenses.push(e);}
+  const list=[...map.values()].map(c=>{
+    const revenue=c.items.reduce((n,i)=>n+i.amount,0),itemCost=c.items.reduce((n,i)=>n+i.costTotal,0),extra=c.expenses.reduce((n,e)=>n+e.amount,0),cost=itemCost+extra;
+    return {...c,date:dates[c.campaign]||'',revenue,itemCost,extra,cost,profit:revenue-cost,margin:revenue?(revenue-cost)/revenue:null,missing:c.items.filter(i=>i.cost===undefined).length};
+  });
+  const pos=c=>order.indexOf(c.campaign);
+  return list.sort((a,b)=>a.date&&b.date?a.date.localeCompare(b.date)||pos(a)-pos(b):a.date?-1:b.date?1:pos(a)-pos(b));
+}
+// 幾團加起來（全部或自己挑的幾團）
+export function profitTotal(campaigns){
+  const revenue=campaigns.reduce((n,c)=>n+c.revenue,0),cost=campaigns.reduce((n,c)=>n+c.cost,0);
+  return {revenue,cost,profit:revenue-cost,margin:revenue?(revenue-cost)/revenue:null,missing:campaigns.reduce((n,c)=>n+c.missing,0)};
+}

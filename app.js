@@ -1,22 +1,25 @@
-import {summarize,validateOrder,demoOrders,summaryCsv,itemTotals,itemTotalsCsv,buyerMessage,cleanPhone,stages,progressOf,groupSignature,noPickupHistory,allocatePurchased,itemKey} from './core.js';
+import {summarize,validateOrder,demoOrders,summaryCsv,itemTotals,itemTotalsCsv,buyerMessage,cleanPhone,stages,progressOf,groupSignature,noPickupHistory,allocatePurchased,itemKey,profitReport,profitTotal} from './core.js';
+import {lineChart,donutChart,donutParts,chartColor,lineSeries} from './charts.js';
 const messageNoteKey='tuantuan-message-note';
 import {importFields,guessMapping,guessProducts,readTable,planImport,MAX_PRODUCTS,pickTimes} from './importer.js';
 import {formIdFromUrl,responsesToTable,splitNew,mappingToNames,namesToMapping} from './google-sync.js';
 import {logo,heroArt,emptyArt,stageIcon,themes,themeKey,applyTheme,sizes,sizeKey,applySize} from './art.js';
-import {storageKey,recoveryKey,MAX_BACKUP_BYTES,SCHEMA_VERSION,parseBackup,parseBackupFile,backupText,restoreBackup} from './backup.js';
+import {storageKey,recoveryKey,MAX_BACKUP_BYTES,SCHEMA_VERSION,parseBackup,parseBackupFile,backupText,restoreBackup,isDate} from './backup.js';
 const $=selector=>document.querySelector(selector);
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=value=>'NT$ '+value.toLocaleString('en-US');
-const paths={home:'M3 10 12 3l9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z M9 21v-8h6v8',orders:'M6 3h12v18H6z M9 8h6 M9 12h6 M9 16h4',sources:'M8 3H4v18h16V7h-8V3z M12 3l8 4 M8 12h8 M8 16h5',export:'M12 3v12 M7 10l5 5 5-5 M4 16v5h16v-5',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2',plus:'M12 5v14 M5 12h14',search:'M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14 M15 15l6 6',alert:'M12 3 2 21h20L12 3z M12 9v5 M12 17v1',people:'M9 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M2 21v-3a7 7 0 0 1 14 0v3 M17 4a4 4 0 0 1 0 7 M19 14a6 6 0 0 1 3 5',box:'M3 7l9-5 9 5v11l-9 5-9-5V7z M3 7l9 5 9-5 M12 12v11 M8 4l9 5',check:'M5 12l4 4L19 6',arrow:'M9 5l7 7-7 7'};
+const paths={home:'M3 10 12 3l9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z M9 21v-8h6v8',orders:'M6 3h12v18H6z M9 8h6 M9 12h6 M9 16h4',sources:'M8 3H4v18h16V7h-8V3z M12 3l8 4 M8 12h8 M8 16h5',export:'M12 3v12 M7 10l5 5 5-5 M4 16v5h16v-5',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2',plus:'M12 5v14 M5 12h14',search:'M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14 M15 15l6 6',alert:'M12 3 2 21h20L12 3z M12 9v5 M12 17v1',people:'M9 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M2 21v-3a7 7 0 0 1 14 0v3 M17 4a4 4 0 0 1 0 7 M19 14a6 6 0 0 1 3 5',box:'M3 7l9-5 9 5v11l-9 5-9-5V7z M3 7l9 5 9-5 M12 12v11 M8 4l9 5',check:'M5 12l4 4L19 6',profit:'M3 3v18h18 M7 15l4-4 3 3 6-7',arrow:'M9 5l7 7-7 7'};
 const icon=name=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${paths[name]||paths.orders}"/></svg>`;
 let pendingRestore=null;
 let importBook=null,importTable=null,importPlan=null,importFileName='';
-const emptyState=demo=>({schemaVersion:SCHEMA_VERSION,orders:demo?structuredClone(demoOrders):[],overrides:{},history:[],demo,progress:{},purchased:{},shipped:{},noStore:[]});
+const demoCosts=()=>Object.fromEntries([['秋日生活選物','日常帆布袋・奶油白',240],['秋日生活選物','日常帆布袋・墨綠',240],['秋日生活選物','陶瓷馬克杯・燕麥',150],['秋日生活選物','居家香氛・森林',300],['週末咖啡器物','手沖分享壺',430]].map(([c,i,n])=>[itemKey(c,i),n]));
+const emptyState=demo=>({schemaVersion:SCHEMA_VERSION,orders:demo?structuredClone(demoOrders):[],overrides:{},history:[],demo,progress:{},purchased:{},shipped:{},noStore:[],costs:demo?demoCosts():{},expenses:demo?[{id:'demo-ship',campaign:'秋日生活選物',label:'包材',amount:200}]:[],dates:demo?{'週末咖啡器物':'2026-09-20','秋日生活選物':'2026-10-05'}:{}});
 let state=emptyState(true);
 let storageWarning='';
 try{const saved=JSON.parse(localStorage.getItem(storageKey));if(saved&&Array.isArray(saved.orders)&&saved.orders.every(o=>typeof o.id==='string'&&typeof o.store==='string'&&validateOrder(o).length===0)&&saved.overrides&&Array.isArray(saved.history))state=saved;}catch{storageWarning='無法讀取本機資料，已載入示範訂單。';}
-for(const key of ['progress','purchased','shipped'])if(!state[key]||typeof state[key]!=='object'||Array.isArray(state[key]))state[key]={};
+for(const key of ['progress','purchased','shipped','costs','dates'])if(!state[key]||typeof state[key]!=='object'||Array.isArray(state[key]))state[key]={};
 if(!Array.isArray(state.noStore))state.noStore=[];
+if(!Array.isArray(state.expenses))state.expenses=[];
 let currentTheme='';try{currentTheme=localStorage.getItem(themeKey)||'';}catch{}
 if(!themes.some(t=>t[0]===currentTheme))currentTheme='';
 applyTheme(currentTheme);
@@ -25,7 +28,7 @@ if(!sizes.some(s=>s[0]===currentSize))currentSize='';
 applySize(currentSize);
 let page='home',filter='all',query='',campaign='all',stageFilter='any';
 const when=at=>new Date(at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'});
-const nav=[['home','總覽'],['orders','訂單'],['sources','資料來源'],['export','匯出'],['settings','設定']];
+const nav=[['home','總覽'],['orders','訂單'],['profit','賺多少'],['sources','資料來源'],['export','匯出'],['settings','設定']];
 const allGroups=()=>summarize(state.orders,state.overrides,state.noStore);
 const groups=()=>allGroups().filter(g=>campaign==='all'||g.campaign===campaign);
 const save=()=>{try{state.updatedAt=new Date().toISOString();localStorage.setItem(storageKey,JSON.stringify(state));scheduleAutoBackup();return true;}catch{toast('本機儲存失敗，請先備份資料，關閉後可能遺失。');return false;}};
@@ -51,9 +54,10 @@ const addButton=()=>`<button class="primary" data-action="add">${icon('plus')}�
 function campaignSelect(){return `<select id="campaign" aria-label="選擇團別"><option value="all">所有團別</option>${[...new Set(state.orders.map(o=>o.campaign))].map(c=>`<option ${campaign===c?'selected':''} value="${escape(c)}">${escape(c)}</option>`).join('')}</select>`;}
 function render(){
   for(const id of ['desktop-nav','mobile-nav'])$('#'+id).innerHTML=nav.map(([key,label])=>`<button data-page="${key}" class="${page===key?'active':''}" ${page===key?'aria-current="page"':''}>${icon(key)}${label}</button>`).join('');
-  $('#page-label').textContent={home:'訂單總覽',orders:'買家訂單',sources:'資料來源',export:'匯出中心',settings:'工作室設定'}[page];
+  $('#page-label').textContent={home:'訂單總覽',orders:'買家訂單',profit:'賺多少',sources:'資料來源',export:'匯出中心',settings:'工作室設定'}[page];
   $('.source-pill').innerHTML=`<span class="dot"></span>${state.demo?'示範資料':'本機資料'}`;
   if(page==='home'||page==='orders')renderOrders();
+  else if(page==='profit')renderProfit();
   else if(page==='sources')renderSources();
   else if(page==='export')renderExport();
   else renderSettings();
@@ -209,6 +213,68 @@ async function googleSync(manual=false){
  googleSyncing=false;if(page==='sources')renderGoogleCard();
 }
 function startGoogleTimer(){clearInterval(googleTimer);googleTimer=null;if(desktop?.googleFetch&&googleConfig())googleTimer=setInterval(()=>googleSync(),GOOGLE_EVERY);}
+// ===== 賺多少：成本、利潤、折線圖、圓餅圖 =====
+// profitView：'all' 全部、'compare' 自己挑幾團比、其他＝某一團；這些只記在畫面上，不存檔
+let profitView='all',profitPick=null,profitPoint=null,profitLine=null;
+const pct=m=>m===null?'—':Math.round(m*100)+'%';
+const signedMoney=v=>(v<0?'-':'')+money(Math.abs(v));
+function profitData(){
+ const all=profitReport(state.orders,allGroups(),state),names=all.map(c=>c.campaign);
+ if(!['all','compare'].includes(profitView)&&!names.includes(profitView))profitView='all';
+ profitPick=new Set([...(profitPick||names)].filter(c=>names.includes(c)));
+ if(!profitPick.size)profitPick=new Set(names);
+ const chosen=profitView==='all'?all:profitView==='compare'?all.filter(c=>profitPick.has(c.campaign)):all.filter(c=>c.campaign===profitView);
+ return {all,chosen,one:['all','compare'].includes(profitView)?null:chosen[0]};
+}
+function renderProfit(){
+ // 重畫前記住游標在哪一格（填完成本按 Tab 跳下一格時不要跳掉）
+ const active=document.activeElement,keep=active?.dataset&&['cost','date'].find(k=>active.dataset[k]!==undefined),keepValue=keep&&active.dataset[keep];
+ const {all,chosen,one}=profitData(),sum=profitTotal(chosen);
+ const head=heading('每一團，賺了多少？','填好每個商品的成本，團團幫你算收入、成本和利潤。');
+ if(!all.length){$('#view').innerHTML=head+`<section class="card"><div class="empty-art">${emptyArt('orders')}<b>還沒有訂單</b><p>匯入或新增訂單後，這裡會算出每一團賺多少。</p></div></section>`;return;}
+ const pill=(value,label)=>`<button class="pill ${profitView===value?'on':''}" data-profit="${escape(value)}" aria-pressed="${profitView===value}">${escape(label)}</button>`;
+ const missingAt=chosen.find(c=>c.missing);
+ $('#view').innerHTML=head+`<p class="footnote profit-note">只有你看得到：成本和利潤不會出現在整單摘要 CSV 和給買家的訊息裡（會跟著資料備份一起存）。收入＝買家該付的商品金額，含待確認、不含取消和運費，不是已經收到的錢。</p>
+  <div class="profit-pills">${pill('all','全部')}${all.map(c=>pill(c.campaign,c.campaign)).join('')}${all.length>1?pill('compare','自己挑來比'):''}</div>
+  ${profitView==='compare'?`<div class="profit-pick">${all.map(c=>`<label><input type="checkbox" data-pick="${escape(c.campaign)}" ${profitPick.has(c.campaign)?'checked':''}> ${escape(c.campaign)}</label>`).join('')}</div>`:''}
+  <div class="stats profit-stats"><div class="stat"><div class="stat-top">收入${icon('box')}</div><strong><small>NT$ </small>${sum.revenue.toLocaleString('en-US')}</strong><small>買家該付的商品金額</small></div><div class="stat"><div class="stat-top">成本${icon('orders')}</div><strong><small>NT$ </small>${sum.cost.toLocaleString('en-US')}</strong><small>商品成本＋其他花費</small></div><div class="stat ${sum.profit<0?'warn':'profit-good'}"><div class="stat-top">利潤${icon('profit')}</div><strong><small>NT$ </small>${sum.profit.toLocaleString('en-US')}</strong><small>${sum.profit<0?'這樣算是虧錢':'收入 − 成本'}</small></div><div class="stat"><div class="stat-top">賺幾成${icon('check')}</div><strong>${pct(sum.margin)}</strong><small>利潤 ÷ 收入</small></div></div>
+  ${sum.missing?`<div class="alert">${icon('alert')}<span>還有 ${sum.missing} 個商品沒填成本，先當 0 算，利潤會算太多。</span>${one?'':`<button data-profit="${escape(missingAt.campaign)}">去填「${escape(missingAt.campaign)}」→</button>`}</div>`:''}
+  <div class="grid2 profit-charts"><section class="card"><h2>每一團賺多少</h2><div class="chart-legend">${lineSeries.map(([,label,cls])=>`<span><i class="key ${cls}"></i>${label}</span>`).join('')}</div><div id="line-box" class="line-box"></div><p id="line-readout" class="readout"></p></section>
+  <section class="card"><h2>${one?'這團的利潤從哪個商品來':'利潤從哪一團來'}</h2>${donutSection(all,chosen,one)}</section></div>
+  ${one?costCard(one)+expenseCard(one):campaignCard(chosen)}`;
+ profitLine=one?{list:all,selected:all.indexOf(one)}:{list:chosen,selected:chosen.length-1};
+ if(profitPoint!==null&&profitPoint<profitLine.list.length)profitLine.selected=profitPoint;
+ drawProfitLine();
+ if(keep){const el=[...document.querySelectorAll(`[data-${keep}]`)].find(el=>el.dataset[keep]===keepValue);el?.focus();}
+}
+function drawProfitLine(){
+ const box=$('#line-box');if(!box||!profitLine)return;
+ const {list,selected}=profitLine,c=list[selected];
+ box.innerHTML=lineChart(list.map(c=>({label:c.campaign,revenue:c.revenue,cost:c.cost,profit:c.profit})),box.clientWidth,selected);
+ $('#line-readout').innerHTML=c?`<b>${escape(c.campaign)}</b>${c.date?`（${escape(c.date.replaceAll('-','/'))} 開團）`:''}<br>收入 ${money(c.revenue)} · 成本 ${money(c.cost)} · 利潤 <b>${signedMoney(c.profit)}</b>（${pct(c.margin)}）${list.length<2?'<br><span class="muted">再多一團，就會連成線。</span>':'<br><span class="muted">點圖上的團，可以看那一團的數字。</span>'}`:'';
+}
+function donutSection(all,chosen,one){
+ const entries=one?one.items.map((it,i)=>({label:it.item,value:it.profit,color:chartColor(i)})):chosen.map(c=>({label:c.campaign,value:c.profit,color:chartColor(all.indexOf(c))}));
+ const parts=donutParts(entries),total=parts.reduce((n,p)=>n+p.value,0),losing=entries.filter(e=>e.value<0).length;
+ if(!parts.length)return `<div class="empty-art">${emptyArt('export')}<b>還沒有賺錢的${one?'商品':'團'}</b><p>填好成本後，這裡會顯示利潤從哪裡來。</p></div>`;
+ // 單一團的圓餅是商品本身的利潤（還沒扣其他花費），中間的字要講清楚，免得跟上面的利潤對不起來
+ const center=one?'商品利潤':losing?'賺錢的團合計':'利潤';
+ return `<div class="donut-wrap">${donutChart(parts,center)}<ul class="donut-legend">${parts.map(p=>`<li><i class="key" style="background:${p.color}"></i><span>${escape(p.label)}</span><b>${Math.round(p.value/total*100)}%</b><small>${money(p.value)}</small></li>`).join('')}</ul></div>${one&&one.extra?`<p class="footnote">這是商品本身的利潤，還沒扣其他花費 ${money(one.extra)}。</p>`:''}${losing?`<p class="footnote">虧錢的 ${losing} 個${one?'商品':'團'}沒有畫在圓餅圖裡。</p>`:''}`;
+}
+function costCard(c){
+ return `<section class="card"><div class="card-title"><h2>商品成本</h2><label class="buy-input">開團日期<input type="date" data-date="${escape(c.campaign)}" value="${escape(c.date)}" aria-label="${escape(c.campaign)} 開團日期"></label></div><p class="footnote">成本＝跟廠商買一個要多少錢。填一次就好，之後重新匯入也會記得。</p><div class="buy-list profit-list">${c.items.map(it=>{const key=itemKey(c.campaign,it.item);return `<div class="buy-row"><div class="buy-name"><b>${escape(it.item)}</b><small>售價 ${it.prices.map(p=>p.toLocaleString('en-US')).join('／')} · 賣出 ${it.quantity.toLocaleString('en-US')} 件 · 收入 ${money(it.amount)}</small></div><label class="buy-input">成本<input type="number" inputmode="numeric" min="0" max="10000000" step="1" placeholder="0" data-cost="${escape(key)}" value="${it.cost??''}" aria-label="${escape(it.item)} 每個成本"></label><span class="buy-status">${it.cost===undefined?'<span class="muted">還沒填成本</span>':`<span class="${it.profit<0?'warn-text':'ok-text'}">利潤 ${signedMoney(it.profit)}</span>`}</span></div>`;}).join('')||'<p class="footnote">這團目前沒有有效的商品（都取消了）。</p>'}</div></section>`;
+}
+function expenseCard(c){
+ return `<section class="card"><h2>其他花費</h2><p class="footnote">運費、包材、手續費這類整團的錢，會從利潤扣掉。</p>${c.expenses.map(e=>`<div class="preview-row"><div>${escape(e.label)}</div><div class="expense-right"><b>${money(e.amount)}</b><button class="link" data-expense-del="${escape(e.id)}" aria-label="刪除 ${escape(e.label)}">刪除</button></div></div>`).join('')}<div class="expense-add"><input id="expense-label" maxlength="100" placeholder="例如：國際運費" aria-label="花費名稱"><input id="expense-amount" type="number" inputmode="numeric" min="0" max="10000000" step="1" placeholder="金額" aria-label="花費金額"><button class="secondary" data-action="add-expense">${icon('plus')}加一筆</button></div><div id="expense-error" class="error" role="alert"></div><div class="export-total"><span>其他花費合計</span><span>${money(c.extra)}</span></div></section>`;
+}
+function campaignCard(list){
+ return `<section class="card"><h2>${profitView==='compare'?'挑的這幾團':'每一團'}</h2><p class="footnote">點團名可以填那一團的成本和其他花費。開團日期填了，圖上就照日期排；沒填的照匯入先後排在後面。</p><div class="buy-list profit-list">${list.map(c=>`<div class="buy-row"><div class="buy-name"><button class="link-name" data-profit="${escape(c.campaign)}">${escape(c.campaign)}</button><small>收入 ${money(c.revenue)} · 成本 ${money(c.cost)}${c.missing?` · <span class="warn-inline">${c.missing} 個商品沒填成本</span>`:''}</small></div><label class="buy-input">開團<input type="date" data-date="${escape(c.campaign)}" value="${escape(c.date)}" aria-label="${escape(c.campaign)} 開團日期"></label><span class="buy-status"><span class="${c.profit<0?'warn-text':'ok-text'}">${signedMoney(c.profit)}</span><small class="muted">賺 ${pct(c.margin)}</small></span></div>`).join('')}</div></section>`;
+}
+// 點／滑過折線圖的某一團
+function pickPoint(event){const hit=event.target.closest?.('[data-point]');if(!hit||!profitLine)return;const i=Number(hit.dataset.point);if(i===profitLine.selected)return;profitPoint=profitLine.selected=i;drawProfitLine();}
+document.addEventListener('click',pickPoint);
+document.addEventListener('mouseover',pickPoint);
+let resizeFrame;addEventListener('resize',()=>{if(page!=='profit')return;cancelAnimationFrame(resizeFrame);resizeFrame=requestAnimationFrame(drawProfitLine);});
 function renderExport(){
  const gs=groups(),ready=gs.filter(g=>g.active&&!g.issues.length),blocked=gs.filter(g=>g.issues.length).length;
  $('#view').innerHTML=heading('出發前，再確認一次。','預覽整理好的買家清單與金額。')+`<div class="section-top"><h2>匯出範圍</h2>${campaignSelect()}</div><div class="notice">目前可下載「整單摘要 CSV」，可用 Excel 開啟。這不是賣貨便正式匯入檔；取得官方範本後才能完成格式對接。金額未含運費。</div><div class="grid2" style="margin-top:20px"><section class="card"><h2>本次可匯出 ${ready.length} 份</h2>${ready.map(g=>`<div class="preview-row"><div>${escape(g.name)}<small>${escape(g.campaign)} · ${g.quantity} 件</small></div><b>${money(g.total)}</b></div>`).join('')||`<div class="empty-art">${emptyArt('export')}<b>目前沒有可匯出的清單</b><p>處理完「待確認」的買家，就會出現在這裡。</p></div>`}<div class="export-total"><span>商品總額</span><span>${money(ready.reduce((n,g)=>n+g.total,0))}</span></div><button class="primary full" data-action="download" ${ready.length?'':'disabled'}>${icon('export')}下載整單摘要 CSV</button><p class="footnote">${blocked} 份待確認清單會排除。重複下載只會產生摘要，不會建立賣貨便訂單。</p></section><section class="card"><h2>摘要下載紀錄</h2>${state.history.length?state.history.slice(0,5).map(h=>`<div class="preview-row"><div>${escape(h.count)} 份清單<small>${escape(new Date(h.at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}))}</small></div><span class="badge neutral">已產生</span></div>`).join(''):`<div class="empty-art">${emptyArt('history')}<b>還沒有下載紀錄</b><p>下載過摘要後，這裡會記下時間和份數。</p></div>`}<p class="footnote">紀錄代表已產生下載檔案，不代表訂單已匯入、付款或出貨。</p></section></div>${itemSection(gs)}`;
@@ -333,6 +399,26 @@ document.addEventListener('change',async event=>{
   const status=[...document.querySelectorAll('[data-buy-status]')].find(el=>el.dataset.buyStatus===key);
   if(status)status.innerHTML=buyStatus(Number(input.dataset.need),state.purchased[key]);
  }
+ // 賺多少：每個成本、開團日期；空白＝還沒填。存不進本機就退回
+ if(event.target.dataset.cost!==undefined){
+  const input=event.target,key=input.dataset.cost,raw=input.value.trim(),n=Number(raw),before=state.costs[key];
+  if(raw&&(!Number.isSafeInteger(n)||n<0||n>10000000)){toast('成本要填 0 以上的整數');input.value=before??'';return;}
+  if(raw)state.costs[key]=n;else delete state.costs[key];
+  if(!save()){if(before===undefined)delete state.costs[key];else state.costs[key]=before;}
+  renderProfit();
+ }
+ if(event.target.dataset.date!==undefined){
+  const input=event.target,name=input.dataset.date,value=input.value,before=state.dates[name];
+  if(value&&!isDate(value)){toast('開團日期看不懂，請重新選');input.value=before??'';return;}
+  if(value)state.dates[name]=value;else delete state.dates[name];
+  if(!save()){if(before===undefined)delete state.dates[name];else state.dates[name]=before;}
+  profitPoint=null;renderProfit();
+ }
+ if(event.target.dataset.pick!==undefined){
+  const name=event.target.dataset.pick;
+  if(event.target.checked)profitPick.add(name);else if(profitPick.size>1)profitPick.delete(name);else{event.target.checked=true;toast('至少要留一團');return;}
+  profitPoint=null;renderProfit();
+ }
  if(event.target.id==='campaign'){campaign=event.target.value;render();}
  if(event.target.id==='stage-filter'){stageFilter=event.target.value;renderRows();}
  if(event.target.id==='backup-file'){
@@ -368,6 +454,8 @@ document.addEventListener('submit',event=>{
 document.addEventListener('click',async event=>{
  const button=event.target.closest('button');if(!button)return;
  if(button.dataset.page){page=button.dataset.page;render();window.scrollTo({top:0});return;}
+ if(button.dataset.profit!==undefined){profitView=button.dataset.profit;profitPoint=null;renderProfit();return;}
+ if(button.dataset.expenseDel!==undefined){const before=state.expenses;state.expenses=before.filter(e=>e.id!==button.dataset.expenseDel);if(!save())state.expenses=before;renderProfit();toast('已刪除這筆花費。');return;}
  if('sizePick' in button.dataset){currentSize=button.dataset.sizePick;applySize(currentSize);try{localStorage.setItem(sizeKey,currentSize);}catch{}renderSettings();toast('字體大小改成「'+sizes.find(s=>s[0]===currentSize)[1]+'」。');return;}
  if('themePick' in button.dataset){currentTheme=button.dataset.themePick;applyTheme(currentTheme);try{localStorage.setItem(themeKey,currentTheme);}catch{}renderSettings();toast('已換成「'+themes.find(t=>t[0]===currentTheme)[1]+'」風格。');return;}
  if(button.dataset.filter){filter=button.dataset.filter;renderOrders();return;}
@@ -400,6 +488,14 @@ document.addEventListener('click',async event=>{
   case 'download':{const ready=groups().filter(g=>g.active&&!g.issues.length);if(!ready.length)return;button.disabled=true;const result=await saveFile('團團-整單摘要-非賣貨便匯入檔.csv',summaryCsv(ready),'text/csv;charset=utf-8');if(result.ok||result.browser||result.shared){state.history.unshift({at:new Date().toISOString(),count:ready.length});save();}renderExport();toast(saveMessage(result,'整單摘要'));break;}
   case 'download-items':{const totals=itemTotals(groups());if(!totals.length)return;button.disabled=true;const result=await saveFile('團團-叫貨統計.csv',itemTotalsCsv(totals,state.purchased),'text/csv;charset=utf-8');button.disabled=false;toast(saveMessage(result,'叫貨統計'));break;}
   case 'copy-message':{const box=$('#buyer-message');if(await copyText(box)){toast('已複製，可以貼到 LINE 或簡訊。');$('#message-error').textContent='';}else{box.select();$('#message-error').textContent='無法自動複製，文字已全選，請按 Ctrl+C（手機長按）複製。';}break;}
+  case 'add-expense':{
+   const label=$('#expense-label').value.trim(),raw=$('#expense-amount').value.trim(),amount=Number(raw),c=profitData().one;if(!c)break;
+   if(!label){$('#expense-error').textContent='請填花費名稱，例如：國際運費';break;}
+   if(!raw||!Number.isSafeInteger(amount)||amount<0||amount>10000000){$('#expense-error').textContent='金額要填 0 以上的整數';break;}
+   const before=state.expenses;state.expenses=[...before,{id:crypto.randomUUID(),campaign:c.campaign,label,amount}];
+   if(!save()){state.expenses=before;break;}
+   renderProfit();toast('已加一筆花費，利潤已重新計算。');break;
+  }
   case 'open-backup-dir':{const result=await desktop.openBackupDir();if(result.error)toast('無法打開備份資料夾：'+result.error);break;}
   case 'choose-backup-dir':{const result=await desktop.chooseBackupDir();if(result.error){toast('無法使用這個位置：'+result.error);break;}if(result.canceled)break;backupStatus={};const saved=await runAutoBackup();renderBackupStatus();if(!saved.error)toast('之後的自動備份會存到：'+result.dir);break;}
   case 'backup':{button.disabled=true;const now=new Date(),pad=n=>String(n).padStart(2,'0'),stamp=`${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;const result=await saveFile(`團團-備份-${stamp}.json`,backupText(state,desktop?'desktop':'web',now),'application/json');button.disabled=false;toast(saveMessage(result,'備份'));break;}

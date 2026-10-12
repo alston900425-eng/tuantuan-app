@@ -2,12 +2,15 @@ import {validateOrder,summarize,stages} from './core.js';
 
 // 4：加入已訂數量 purchased、每項已寄出 shipped、不用門市的團別 noStore、資料最後修改時間 updatedAt；
 // 備份檔另外帶 savedAt／savedBy（哪時、哪裡存的），讀進來後不留在資料裡
-export const SCHEMA_VERSION=4;
+// 5：加入賺多少用的每件成本 costs、其他花費 expenses、開團日期 dates
+export const SCHEMA_VERSION=5;
 
 export const MAX_BACKUP_BYTES=5*1024*1024;
 export const storageKey='tuantuan-prototype-v1';
 export const recoveryKey=storageKey+'-before-restore';
 const isTime=value=>typeof value==='string'&&value.length<=40&&Number.isFinite(Date.parse(value));
+// 開團日期：YYYY-MM-DD，而且是真的日期（沒有 2 月 30 日）
+export const isDate=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(value+'T00:00:00Z'))&&new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;
 const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 function fields(value,allowed,label){
   if(!object(value))throw new Error(`${label}必須是物件`);
@@ -15,8 +18,8 @@ function fields(value,allowed,label){
 }
 
 export function validateBackup(value){
-  fields(value,['schemaVersion','orders','overrides','history','demo','progress','purchased','shipped','noStore','updatedAt','savedAt','savedBy'],'備份');
-  if(value.schemaVersion!==undefined&&![1,2,3,4].includes(value.schemaVersion))throw new Error('不支援此備份版本');
+  fields(value,['schemaVersion','orders','overrides','history','demo','progress','purchased','shipped','noStore','costs','expenses','dates','updatedAt','savedAt','savedBy'],'備份');
+  if(value.schemaVersion!==undefined&&![1,2,3,4,5].includes(value.schemaVersion))throw new Error('不支援此備份版本');
   for(const key of ['updatedAt','savedAt'])if(value[key]!==undefined&&!isTime(value[key]))throw new Error('備份的時間紀錄無效');
   if(value.savedBy!==undefined&&!['desktop','web'].includes(value.savedBy))throw new Error('備份的來源紀錄無效');
   if(typeof value.demo!=='boolean')throw new Error('備份 demo 必須是布林值');
@@ -78,8 +81,24 @@ export function validateBackup(value){
   for(const [id,at] of Object.entries(shipped))if(id.length>500||!isTime(at))throw new Error('已寄出紀錄的時間無效');
   const noStore=value.noStore??[];
   if(!Array.isArray(noStore)||noStore.length>1000||noStore.some(c=>typeof c!=='string'||!c.trim()||c.length>500))throw new Error('不用門市的團別無效');
+  const costs=value.costs??{};
+  if(!object(costs)||Object.keys(costs).length>10000)throw new Error('商品成本必須是物件，最多 10,000 項');
+  for(const [key,n] of Object.entries(costs))if(key.length>2000||!Number.isSafeInteger(n)||n<0||n>10000000)throw new Error('商品成本無效');
+  const expenses=value.expenses??[];
+  if(!Array.isArray(expenses)||expenses.length>1000)throw new Error('其他花費必須是陣列，最多 1,000 筆');
+  const expenseIds=new Set();
+  for(const e of expenses){
+    fields(e,['id','campaign','label','amount'],'其他花費');
+    if(typeof e.id!=='string'||!e.id.trim()||e.id.length>100||expenseIds.has(e.id))throw new Error('其他花費的 ID 空白或重複');
+    expenseIds.add(e.id);
+    if(typeof e.campaign!=='string'||!e.campaign.trim()||e.campaign.length>500||typeof e.label!=='string'||!e.label.trim()||e.label.length>100)throw new Error('其他花費的團別或名稱無效');
+    if(!Number.isSafeInteger(e.amount)||e.amount<0||e.amount>10000000)throw new Error('其他花費的金額無效');
+  }
+  const dates=value.dates??{};
+  if(!object(dates)||Object.keys(dates).length>1000)throw new Error('開團日期必須是物件，最多 1,000 團');
+  for(const [c,d] of Object.entries(dates))if(c.length>500||!isDate(d))throw new Error('開團日期無效');
   const {savedAt,savedBy,...rest}=value;
-  return structuredClone({...rest,progress,purchased,shipped,noStore,schemaVersion:SCHEMA_VERSION});
+  return structuredClone({...rest,progress,purchased,shipped,noStore,costs,expenses,dates,schemaVersion:SCHEMA_VERSION});
 }
 // 寫進備份檔的文字：多記哪時、哪裡存的（desktop 電腦版／web 手機或網頁版）
 export function backupText(state,savedBy,now=new Date()){
