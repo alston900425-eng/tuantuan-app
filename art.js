@@ -1,11 +1,11 @@
-// 團團的 Logo、吉祥物「小團」與插圖（內嵌 SVG）。顏色用 class，跟著 style.css 的風格變數換色；固定色版本在 www/assets/。
-// 圖形來自設計畫布「團團美術包 v1」（Logo A 笑臉購物袋、小團 7 種表情、主視覺、6 張插圖、6 個進度圖示），規格見 docs/ART-BRIEF.md。
+// 艾麗莎的 Logo、吉祥物「小團」與插圖（內嵌 SVG）。顏色用 class，跟著 style.css 的風格變數換色；固定色版本在 www/assets/。
+// 圖形來自設計畫布「團團美術包 v1」（改名前的名稱）（Logo A 笑臉購物袋、小團 7 種表情、主視覺、6 張插圖、6 個進度圖示），規格見 docs/ART-BRIEF.md。
 const svg=(box,body,label='')=>`<svg class="ill" viewBox="${box}" ${label?`role="img" aria-label="${label}"`:'aria-hidden="true"'} xmlns="http://www.w3.org/2000/svg">${body}</svg>`;
 
 // Logo A：圓角方塊裡的笑臉購物袋。small＝16／24px 簡化版（拿掉眼睛、腮紅、袋口色帶）
 const LOGO=`<rect class="f-brand" width="120" height="120" rx="28"/><path class="s-accent" d="M46 46 C46 25 74 25 74 46" fill="none" stroke-width="7" stroke-linecap="round"/><path class="f-accent" d="M33 42 H87 Q93.5 42 94 48.5 L97 88 Q97.8 99 87 99 H33 Q22.2 99 23 88 L26 48.5 Q26.5 42 33 42 Z"/><path class="f-accent2" d="M26.4 47 Q27 42 33 42 H87 Q93 42 93.6 47 L94 52 H26 Z"/><circle class="f-ink" cx="46" cy="47" r="2.3"/><circle class="f-ink" cx="74" cy="47" r="2.3"/><circle class="f-ink" cx="47.5" cy="70" r="4.6"/><circle class="f-ink" cx="72.5" cy="70" r="4.6"/><circle class="f-surface" cx="49.1" cy="68.3" r="1.5"/><circle class="f-surface" cx="74.1" cy="68.3" r="1.5"/><ellipse class="f-blush" cx="38" cy="80" rx="5.6" ry="3.6"/><ellipse class="f-blush" cx="82" cy="80" rx="5.6" ry="3.6"/><path class="s-ink" d="M54 79 Q60 85.5 66 79" fill="none" stroke-width="3.2" stroke-linecap="round"/>`;
 const LOGO_SMALL=`<rect class="f-brand" width="16" height="16" rx="3.6"/><path class="s-accent" d="M6 6.2 C6 3 10 3 10 6.2" fill="none" stroke-width="1.5" stroke-linecap="round"/><path class="f-accent" d="M3.6 5.8 H12.4 L12.9 12.2 Q13 13.4 11.8 13.4 H4.2 Q3 13.4 3.1 12.2 Z"/><path class="s-brand" d="M6 9.6 Q8 11.6 10 9.6" fill="none" stroke-width="1.3" stroke-linecap="round"/>`;
-export const logo=(small=false)=>small?svg('0 0 16 16',LOGO_SMALL,'團團'):svg('0 0 120 120',LOGO,'團團');
+export const logo=(small=false)=>small?svg('0 0 16 16',LOGO_SMALL,'艾麗莎'):svg('0 0 120 120',LOGO,'艾麗莎');
 
 // 小團（120×120 座標）：袋子本體不變，只換手、臉和小道具
 const arm=d=>`<path class="s-ink" d="${d}" fill="none" stroke-width="9" stroke-linecap="round"/><path class="s-accent" d="${d}" fill="none" stroke-width="4" stroke-linecap="round"/>`;
@@ -93,7 +93,7 @@ export const themes=[
   ['pro','沉穩專業','深藍色、方正，看起來像正式軟體',['#1f3a5f','#d4e3f6','#f2f4f7']],
 ];
 export const themeKey='tuantuan-theme';
-// 字體大小：整個畫面（字、按鈕、圖）一起放大，版面比例不變
+// 字體大小：以 rem 放大文字，按鈕隨內容撐高，不縮放整個頁面的座標。
 export const sizes=[['','一般','現在的大小'],['large','大','字和按鈕都放大一點，看得更清楚']];
 export const sizeKey='tuantuan-size';
 export function applySize(name){

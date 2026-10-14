@@ -47,12 +47,12 @@ export function summarize(orders, overrides={}, noStore=[]){
     }
     if(possibleDuplicate&&!override.duplicateConfirmed) issues.push('疑似重複填單');
     if(paid>total) issues.push('已付金額超過商品總額');
-    // 買家填的匯款金額（每份回覆記在第一項）跟團團算的不一樣 → 待確認；按「已核對」記下當時兩個數字，之後金額再變就要重新核對
+    // 買家填的匯款金額（每份回覆記在第一項）跟艾麗莎算的不一樣 → 待確認；按「已核對」記下當時兩個數字，之後金額再變就要重新核對
     const claims=[...rows,...g.cancelled].filter(o=>'claimed' in o||'claimedText' in o);
     const claimed=claims.reduce((n,o)=>n+(o.claimed||0),0),unreadable=claims.filter(o=>'claimedText' in o).map(o=>o.claimedText);
     const claimChecked=override.claimedChecked?.claimed===claimed&&override.claimedChecked?.total===total&&override.claimedChecked?.unreadable===unreadable.length;
     const claimIssue=rows.length&&claims.length&&(unreadable.length||claimed!==total)&&!claimChecked;
-    if(claimIssue) issues.push(unreadable.length?`買家填的匯款金額看不懂（「${unreadable.join('」「')}」），請看原始表單核對`:`買家填的匯款金額 ${claimed.toLocaleString('en-US')}，團團算 ${total.toLocaleString('en-US')}，${claimed<total?'少匯':'多匯'} ${Math.abs(total-claimed).toLocaleString('en-US')} 元`);
+    if(claimIssue) issues.push(unreadable.length?`買家填的匯款金額看不懂（「${unreadable.join('」「')}」），請看原始表單核對`:`買家填的匯款金額 ${claimed.toLocaleString('en-US')}，艾麗莎算 ${total.toLocaleString('en-US')}，${claimed<total?'少匯':'多匯'} ${Math.abs(total-claimed).toLocaleString('en-US')} 元`);
     if(cancelledPaid>0&&!override.refundChecked) issues.push(`已取消的商品已付 ${cancelledPaid.toLocaleString('en-US')} 元，請核對退款`);
     if(rows.some(o=>validateOrder(o).length)) issues.push('訂單欄位格式有誤');
     return {...g,noStore:skipStore,name:people[0].name,store,stores,phone:phones[0],total,paid,balance:total-paid,quantity:rows.reduce((n,o)=>n+o.quantity,0),cancelledPaid,active:rows.length>0,issues,possibleDuplicate,claims:claims.length,claimed,unreadable,claimIssue:!!claimIssue,claimChecked:claims.length>0&&claimChecked&&(unreadable.length>0||claimed!==total)};
@@ -141,12 +141,12 @@ export function noPickupHistory(groups,progress={}){
 }
 // 賺多少：收入＝有效訂單的單價×數量（買家該付的商品金額，不是已收到的錢，未含運費）；
 // 成本＝每件成本×件數＋這團的其他花費。costs[itemKey]＝每件成本（沒填的商品成本先算 0，另外回報 missing）；
-// expenses＝[{id,campaign,label,amount}]；dates[團別]＝開團日期 YYYY-MM-DD。
+// expenses＝[{id,campaign,label,amount}]；dates[團別]＝開團日期 YYYY-MM-DD；buyers＝這團有效的買家人數。
 // 團的順序：有填開團日期的照日期，沒填的排後面、照匯入先後（訂單清單裡第一次出現的順序）。
 export function profitReport(orders,groups,{costs={},expenses=[],dates={}}={}){
   const order=[...new Set(orders.map(o=>o.campaign.trim()))];
   const totals=itemTotals(groups),map=new Map();
-  for(const g of groups){const c=g.campaign.trim();if(!map.has(c))map.set(c,{campaign:c,items:[],expenses:[]});}
+  for(const g of groups){const c=g.campaign.trim();if(!map.has(c))map.set(c,{campaign:c,items:[],expenses:[],buyers:0});if(g.active)map.get(c).buyers++;}
   for(const t of totals){
     const unit=costs[itemKey(t.campaign,t.item)],costTotal=(unit??0)*t.quantity;
     map.get(t.campaign).items.push({item:t.item,quantity:t.quantity,amount:t.amount,prices:t.prices,cost:unit,costTotal,profit:t.amount-costTotal});
@@ -161,6 +161,6 @@ export function profitReport(orders,groups,{costs={},expenses=[],dates={}}={}){
 }
 // 幾團加起來（全部或自己挑的幾團）
 export function profitTotal(campaigns){
-  const revenue=campaigns.reduce((n,c)=>n+c.revenue,0),cost=campaigns.reduce((n,c)=>n+c.cost,0);
-  return {revenue,cost,profit:revenue-cost,margin:revenue?(revenue-cost)/revenue:null,missing:campaigns.reduce((n,c)=>n+c.missing,0)};
+  const add=key=>campaigns.reduce((n,c)=>n+c[key],0),revenue=add('revenue'),cost=add('cost');
+  return {revenue,cost,itemCost:add('itemCost'),extra:add('extra'),profit:revenue-cost,margin:revenue?(revenue-cost)/revenue:null,missing:add('missing')};
 }

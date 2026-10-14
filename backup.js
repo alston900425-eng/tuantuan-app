@@ -113,7 +113,7 @@ export function parseBackupFile(text){
 export function parseBackup(text){
   if(new TextEncoder().encode(text).length>MAX_BACKUP_BYTES)throw new Error('備份超過 5 MB');
   let value;
-  try{value=JSON.parse(text.replace(/^\uFEFF/,''));}catch{throw new Error('無法解析 JSON，請選擇團團備份檔');}
+  try{value=JSON.parse(text.replace(/^\uFEFF/,''));}catch{throw new Error('無法解析 JSON，請選擇艾麗莎備份檔');}
   return validateBackup(value);
 }
 
