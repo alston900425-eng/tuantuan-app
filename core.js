@@ -38,12 +38,14 @@ export function summarize(orders, overrides={}, noStore=[]){
     const possibleDuplicate=new Set(fingerprints).size<rows.length;
     const override=overrides[g.key]||{};
     const store=stores.includes(override.store)?override.store:stores.length===1?stores[0]:'';
+    // 同一位買家填了不同姓名／手機：團主選定一個寄件用，原始明細不改
+    const name=names.includes(override.name)?override.name:people[0].name.trim(),phone=phones.includes(override.phone)?override.phone:phones[0];
     const issues=[],skipStore=noStoreSet.has(g.campaign.trim());
     if(rows.length){
       if(stores.length>1&&!store&&!skipStore) issues.push('取貨門市不一致');
       if(rows.some(o=>!o.store.trim())&&!override.store&&!skipStore) issues.push('缺少取貨門市');
-      if(phones.length>1) issues.push('手機號碼不一致');
-      if(names.length>1) issues.push('收件人姓名不一致');
+      if(phones.length>1&&!phones.includes(override.phone)) issues.push('手機號碼不一致');
+      if(names.length>1&&!names.includes(override.name)) issues.push('收件人姓名不一致');
     }
     if(possibleDuplicate&&!override.duplicateConfirmed) issues.push('疑似重複填單');
     if(paid>total) issues.push('已付金額超過商品總額');
@@ -55,7 +57,7 @@ export function summarize(orders, overrides={}, noStore=[]){
     if(claimIssue) issues.push(unreadable.length?`買家填的匯款金額看不懂（「${unreadable.join('」「')}」），請看原始表單核對`:`買家填的匯款金額 ${claimed.toLocaleString('en-US')}，艾麗莎算 ${total.toLocaleString('en-US')}，${claimed<total?'少匯':'多匯'} ${Math.abs(total-claimed).toLocaleString('en-US')} 元`);
     if(cancelledPaid>0&&!override.refundChecked) issues.push(`已取消的商品已付 ${cancelledPaid.toLocaleString('en-US')} 元，請核對退款`);
     if(rows.some(o=>validateOrder(o).length)) issues.push('訂單欄位格式有誤');
-    return {...g,noStore:skipStore,name:people[0].name,store,stores,phone:phones[0],total,paid,balance:total-paid,quantity:rows.reduce((n,o)=>n+o.quantity,0),cancelledPaid,active:rows.length>0,issues,possibleDuplicate,claims:claims.length,claimed,unreadable,claimIssue:!!claimIssue,claimChecked:claims.length>0&&claimChecked&&(unreadable.length>0||claimed!==total)};
+    return {...g,noStore:skipStore,name,names,store,stores,phone,phones,total,paid,balance:total-paid,quantity:rows.reduce((n,o)=>n+o.quantity,0),cancelledPaid,active:rows.length>0,issues,possibleDuplicate,claims:claims.length,claimed,unreadable,claimIssue:!!claimIssue,claimChecked:claims.length>0&&claimChecked&&(unreadable.length>0||claimed!==total)};
   });
 }
 export function summaryCsv(groups){

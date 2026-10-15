@@ -17,9 +17,12 @@ function fields(value,allowed,label){
   if(Object.keys(value).some(key=>!allowed.includes(key)))throw new Error(`${label}包含不支援的欄位，請勿直接匯入其他版本資料`);
 }
 
+// 第 6 版（2026-10-14 只在 Windows v0.2.0 用過幾分鐘）多了二販 resale／resaleItems／resaleFee；二販功能已拿掉，讀到就丟掉，其他照第 5 版
+export const dropResale=value=>{if(!value||typeof value!=='object'||Array.isArray(value))return value;const {resale,resaleItems,resaleFee,...rest}=value;return rest;};
 export function validateBackup(value){
+  value=dropResale(value);
   fields(value,['schemaVersion','orders','overrides','history','demo','progress','purchased','shipped','noStore','costs','expenses','dates','updatedAt','savedAt','savedBy'],'備份');
-  if(value.schemaVersion!==undefined&&![1,2,3,4,5].includes(value.schemaVersion))throw new Error('不支援此備份版本');
+  if(value.schemaVersion!==undefined&&![1,2,3,4,5,6].includes(value.schemaVersion))throw new Error('不支援此備份版本');
   for(const key of ['updatedAt','savedAt'])if(value[key]!==undefined&&!isTime(value[key]))throw new Error('備份的時間紀錄無效');
   if(value.savedBy!==undefined&&!['desktop','web'].includes(value.savedBy))throw new Error('備份的來源紀錄無效');
   if(typeof value.demo!=='boolean')throw new Error('備份 demo 必須是布林值');
@@ -54,9 +57,11 @@ export function validateBackup(value){
   for(const [key,override] of Object.entries(value.overrides)){
     const group=groups.get(key);
     if(!group)throw new Error('確認紀錄對應不到訂單');
-    fields(override,['store','duplicateConfirmed','refundChecked','claimedChecked'],'確認紀錄');
+    fields(override,['store','name','phone','duplicateConfirmed','refundChecked','claimedChecked'],'確認紀錄');
     if('claimedChecked' in override){const c=override.claimedChecked;if(!c||typeof c!=='object'||Array.isArray(c))throw new Error('匯款金額核對紀錄無效');fields(c,['claimed','total','unreadable','at'],'匯款金額核對紀錄');if(![c.claimed,c.total,c.unreadable].every(Number.isSafeInteger)||typeof c.at!=='string'||c.at.length>40||!Number.isFinite(Date.parse(c.at)))throw new Error('匯款金額核對紀錄無效');}
     if('store' in override&&(typeof override.store!=='string'||!group.stores.includes(override.store)))throw new Error('確認門市不在原始訂單中');
+    if('name' in override&&(typeof override.name!=='string'||!group.names.includes(override.name)))throw new Error('確認姓名不在原始訂單中');
+    if('phone' in override&&(typeof override.phone!=='string'||!group.phones.includes(override.phone)))throw new Error('確認手機不在原始訂單中');
     if('duplicateConfirmed' in override&&typeof override.duplicateConfirmed!=='boolean')throw new Error('加購確認必須是布林值');
     if('refundChecked' in override&&typeof override.refundChecked!=='boolean')throw new Error('退款核對必須是布林值');
   }
