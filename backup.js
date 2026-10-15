@@ -1,4 +1,4 @@
-import {validateOrder,summarize,stages} from './core.js';
+import {validateOrder,summarize,stages} from './core.js?v=0.4.5';
 
 // 4：加入已訂數量 purchased、每項已寄出 shipped、不用門市的團別 noStore、資料最後修改時間 updatedAt；
 // 備份檔另外帶 savedAt／savedBy（哪時、哪裡存的），讀進來後不留在資料裡

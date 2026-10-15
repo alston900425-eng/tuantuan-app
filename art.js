@@ -38,7 +38,7 @@ const STAGE_ICONS={
 export const stageIcon=stage=>`<svg class="ic" viewBox="0 0 24 24" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">${STAGE_ICONS[stage]??STAGE_ICONS['']}</svg>`;
 
 // 外觀：跟著系統／淺色／深色（存在這台電腦，不跟備份走）。舊的三種風格（森林綠、奶茶可愛、沉穩專業）已拿掉，舊設定當成「跟著系統」。
-export const themes=[['','跟著系統','電腦或手機是深色就用深色'],['light','淺色','白底，白天看最清楚'],['dark','深色','深色底，晚上看不刺眼']];
+export const themes=[['','跟著系統','電腦或手機是深色就用深色'],['light','淺色','白底，白天看最清楚'],['dark','深色','深色底，晚上看不刺眼'],['pink','粉紅','淡粉底、玫瑰粉按鈕']];
 export const themeKey='tuantuan-theme';
 // 字體大小：以 rem 放大文字，按鈕隨內容撐高，不縮放整個頁面的座標。
 export const sizes=[['','一般','現在的大小'],['large','大','字和按鈕都放大一點，看得更清楚']];
@@ -50,5 +50,5 @@ const isDark=name=>name==='dark'||(!name&&globalThis.matchMedia?.('(prefers-colo
 export function applyTheme(name){
   if(name)document.documentElement.dataset.theme=name;else delete document.documentElement.dataset.theme;
   const meta=document.querySelector('meta[name=theme-color]');
-  if(meta)meta.content=isDark(name)?'#111317':'#FFFFFF';
+  if(meta)meta.content=name==='pink'?'#FFF7FA':isDark(name)?'#111317':'#FFFFFF';
 }

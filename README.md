@@ -4,4 +4,4 @@
 
 - 訂單只存在自己的手機（瀏覽器本機儲存），不會上傳到這個網站或任何伺服器。
 - 這裡只放程式檔案；修改只能由擁有者上傳。
-- 第三方授權：SheetJS（vendor/SheetJS-LICENSE.txt）、思源黑體 Noto Sans TC（vendor/noto-sans-tc/LICENSE.txt）。
+- 第三方授權：SheetJS（vendor/SheetJS-LICENSE.txt）、源泉圓體 TW（fonts/gensen-rounded-tw/OFL.txt）。

@@ -1,8 +1,8 @@
-import {validateOrder,summarize,cleanEmail} from './core.js';
-import {validateBackup,SCHEMA_VERSION} from './backup.js';
+import {validateOrder,summarize,cleanEmail} from './core.js?v=0.4.5';
+import {validateBackup,SCHEMA_VERSION} from './backup.js?v=0.4.5';
 
 export const importFields=[['rowId','來源識別碼／時間戳記'],['name','收件人'],['email','Email'],['phone','手機（沒有可以用 IG）'],['campaign','團別（表單有團別題目才選）'],['item','商品名稱'],['quantity','數量'],['price','單價'],['paid','本筆已付金額'],['claimed','買家填的匯款金額（只用來核對，不算已付）'],['store','取貨門市']];
-const aliases={rowId:['來源識別碼','時間戳記','timestamp','id'],name:['收件人','姓名'],email:['email','電子郵件地址','電子郵件'],phone:['手機','手機號碼','電話'],campaign:['團別'],item:['商品名稱','商品'],quantity:['數量'],price:['單價','單價（nt$）'],paid:['本筆已付金額','已付金額','本次已付','本次已付金額'],claimed:['買家填的匯款金額','匯款金額','應匯金額','轉帳金額','付款金額'],store:['取貨門市','門市','取貨門市名稱／代碼']};
+const aliases={rowId:['來源識別碼','時間戳記','timestamp','id'],name:['收件人','姓名','收件人姓名','真實姓名','真名','本名'],email:['email','電子郵件地址','電子郵件'],phone:['手機','手機號碼','電話','收件人手機','收件人電話','聯絡電話'],campaign:['團別'],item:['商品名稱','商品'],quantity:['數量'],price:['單價','單價（nt$）'],paid:['本筆已付金額','已付金額','本次已付','本次已付金額'],claimed:['買家填的匯款金額','匯款金額','應匯金額','轉帳金額','付款金額'],store:['取貨門市','門市','取貨門市名稱／代碼','收件門市','7-11門市','7-11 門市','門市名稱＋店號','門市＋店號','7-11門市＋店號']};
 // IG 團沒有姓名、手機題：收件人與手機都用 IG（這兩個可以對應同一欄）
 const igHeader=h=>/^(ig|instagram)(\s*帳號)?$/i.test(h.trim());
 export function guessMapping(headers){

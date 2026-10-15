@@ -166,3 +166,72 @@ export function profitTotal(campaigns){
   const add=key=>campaigns.reduce((n,c)=>n+c[key],0),revenue=add('revenue'),cost=add('cost');
   return {revenue,cost,itemCost:add('itemCost'),extra:add('extra'),profit:revenue-cost,margin:revenue?(revenue-cost)/revenue:null,missing:add('missing')};
 }
+// 賣貨便「一般交貨便-取貨付款」匯入檔（2026-10-15 照使用者提供的官方範本）：第 1 列標題（A1:R1 合併）、
+// 第 2 列欄名、第 3 列起一位買家一列，A 欄留空。範本範例列不放。寄件人與收款帳戶每列相同（團主自己的，設定頁填）。
+// 包裹價值＝商品合計（使用者選定，不扣已付、不含運費）。退貨門市不填（依原寄件門市）。尚未實際匯入賣貨便驗證。
+export const MYSHIP_TITLE='一般交貨便-取貨付款(以下欄位皆必填)';
+export const MYSHIP_HEADERS=['','寄件人姓名','寄件人電話','寄件人mail','收款人的帳戶名稱','收款人的金融機構','收款人的金融機構分行(7碼)','收款人的銀行帳號','收款人的銀行開戶之身分ID','銀行開戶使用之身分資料','包裏價值','收件門市','收件門市店號','收件人姓名\n(請填寫證件姓名)','收件人電話','收件人mail','退貨門市\n(非必填，退貨門市未填寫者，則依原寄件門市為退貨門市。此欄位有填寫者，退貨門市店號必填)','退貨門市店號\n(非必填，退貨門市未填寫者，則依原寄件門市為退貨門市。此欄位有填寫者，退貨門市必填)'];
+export const MYSHIP_ACCOUNT_TYPES=['個人戶','商業戶','外籍人士'];
+export const MYSHIP_SENDER_FIELDS=[['name','寄件人姓名'],['phone','寄件人手機'],['email','寄件人 Email'],['accountName','收款帳戶名稱'],['bank','銀行代碼（3 碼）'],['branch','分行代碼（7 碼）'],['account','銀行帳號'],['accountType','帳戶類型'],['id','開戶身分證字號／統編']];
+// 門市欄位裡找 6 碼店號，其餘當門市名稱，例如「百建門市 211147」「百建門市(211147)」
+export function parseStore(text){
+  const s=String(text||'').trim(),m=s.match(/(?<!\d)(\d{6})(?!\d)/);
+  if(!m)return {name:s,code:''};
+  return {name:s.replace(m[0],'').replace(/[()（）[\]【】#:：,，、\s-]+/g,' ').trim(),code:m[1]};
+}
+export const storeText=(name,code)=>`${String(name).trim()} ${String(code).trim()}`;
+const digits=v=>String(v??'').replace(/[\s-]/g,'');
+export function cleanSender(s={}){
+  return {name:String(s.name||'').trim(),phone:digits(s.phone),email:String(s.email||'').trim(),accountName:String(s.accountName||'').trim(),bank:digits(s.bank),branch:digits(s.branch),account:digits(s.account),accountType:MYSHIP_ACCOUNT_TYPES.includes(s.accountType)?s.accountType:'',id:String(s.id||'').trim().toUpperCase()};
+}
+// 回傳還沒填好的欄位（白話），空陣列＝可以匯出
+export function senderProblems(raw){
+  const s=cleanSender(raw),p=[];
+  if(!s.name)p.push('寄件人姓名');
+  if(!/^09\d{8}$/.test(s.phone))p.push('寄件人手機（09 開頭 10 碼）');
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s.email))p.push('寄件人 Email');
+  if(!s.accountName)p.push('收款帳戶名稱');
+  if(!/^\d{3}$/.test(s.bank))p.push('銀行代碼（3 碼）');
+  if(!/^\d{7}$/.test(s.branch))p.push('分行代碼（7 碼）');
+  if(!/^\d{6,16}$/.test(s.account))p.push('銀行帳號（只填數字）');
+  if(!s.accountType)p.push('帳戶類型');
+  else if(!(s.accountType==='個人戶'?/^[A-Z][12]\d{8}$/:s.accountType==='商業戶'?/^\d{8}$/:/^([A-Z]{2}\d{8}|[A-Z][89]\d{8})$/).test(s.id))p.push(s.accountType==='商業戶'?'統一編號（8 碼）':s.accountType==='個人戶'?'身分證字號':'居留證號碼');
+  return p;
+}
+// groups：summarize 的結果（已篩好團別）。只放「資料檢查完成」的買家；缺門市店號、手機、Email、姓名的列在 missing
+export function myshipExport(groups,raw){
+  const s=cleanSender(raw),rows=[],ready=[],missing=[];
+  for(const g of groups.filter(g=>g.active&&!g.issues.length)){
+    const store=parseStore(g.store),why=[];
+    if(!store.code)why.push('門市店號');else if(!store.name)why.push('門市名稱');
+    if(!/^09\d{8}$/.test(g.phone))why.push('手機');
+    if(!g.email)why.push('Email');
+    if(!g.name.trim())why.push('姓名');
+    if(why.length){missing.push({group:g,why});continue;}
+    ready.push(g);
+    rows.push(['',s.name,s.phone,s.email,s.accountName,s.bank,s.branch,s.account,s.accountType,s.id,String(g.total),store.name,store.code,g.name.trim(),g.phone,g.email,'','']);
+  }
+  return {rows,ready,missing};
+}
+// 用 SheetJS 做成 xlsx（全部存成文字，手機開頭 0 不會不見）
+export function myshipWorkbook(XLSX,rows){
+  const aoa=[[MYSHIP_TITLE,...Array(17).fill('')],MYSHIP_HEADERS,...rows];
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  for(const ref of Object.keys(ws))if(ref[0]!=='!'){const c=ws[ref];if(c.v===''){delete ws[ref];continue;}c.t='s';c.v=String(c.v);c.z='@';}
+  ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:17}}];
+  ws['!cols']=[8,12,13,22,18,10,14,18,14,14,10,14,12,16,13,22,18,14].map(wch=>({wch}));
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'工作表1');
+  return XLSX.write(wb,{type:'array',bookType:'xlsx'});
+}
+// 訂單頁「訂到了沒」：每樣商品買家要幾個、已訂幾個（沒填已訂數量算 0）；
+// 每位買家照先填先拿（allocatePurchased）算還差幾件，只看有填已訂數量的商品，都沒填的買家不出現。
+export function orderProgress(groups,orders,purchased={}){
+  const items=itemTotals(groups).map(t=>{const p=purchased[itemKey(t.campaign,t.item)];return {campaign:t.campaign,item:t.item,need:t.quantity,got:Math.min(p??0,t.quantity),filled:p!==undefined};});
+  const got=allocatePurchased(orders,purchased),buyers=new Map();
+  for(const g of groups){
+    if(!g.active||!g.orders.some(o=>got.has(o.id)))continue;
+    const quantity=g.orders.reduce((n,o)=>n+o.quantity,0),n=g.orders.reduce((s,o)=>s+(got.get(o.id)??0),0);
+    buyers.set(g.key,{quantity,got:n,missing:quantity-n});
+  }
+  return {need:items.reduce((n,i)=>n+i.need,0),got:items.reduce((n,i)=>n+i.got,0),items,buyers,filled:items.some(i=>i.filled)};
+}
