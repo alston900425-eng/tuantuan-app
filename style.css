@@ -2,10 +2,11 @@
    深色兩處（跟著系統、手動選深色）寫一樣的值。色碼與對比度照設計畫布規格頁：文字至少 4.5:1、輸入框外框 3:1；最小字 12px。
    字級與粗細 2026-10-15 使用者要求「字太小、改粗體」：小字各放大一級、字重各加一級（內文 500、細標題 400）。
    卡片不用陰影，區塊用標題上方 1px 線分開；只有彈出視窗和底部小提示有陰影。進度顏色 --st-* 每一步一組（字色／底色）。
-   字體 2026-10-16 使用者選「源泉圓體 TW」真正粗體：全部文字 700（只有這一種粗細），下面寫的 400／500／600 都會顯示成粗體。 */
+   字體 2026-10-16 曾換「源泉圓體 TW」粗體；2026-10-18 使用者看過對照圖後換回系統字（Windows 微軟正黑體、Mac 蘋方），字重照下面寫的。
+   源泉圓體檔案（fonts/gensen-rounded-tw）先留著不載入，要換回只要改 --font 並在 index.html 加回那行 link。 */
 :root{
   font-size:16px;color-scheme:light;
-  --font:'Elisa Rounded','PingFang TC','Microsoft JhengHei',system-ui,sans-serif;
+  --font:'PingFang TC','Microsoft JhengHei',system-ui,sans-serif;
   --ink:#16181D;--muted:#5E636E;--faint:#6B707A;
   --brand:#1E2A44;--brand-strong:#121A2C;--brand-soft:#EEF0F5;--on-brand:#FFFFFF;
   --accent:#F1EEE8;--accent-strong:#DDD6CA;--accent-ink:#5C5140;
@@ -236,6 +237,13 @@ h3{font-size:1rem}
 
 .page-footer{font-size:0.875rem;letter-spacing:1px;color:var(--muted);display:flex;justify-content:space-between;margin:64px 0 26px;padding-top:24px;border-top:1px solid var(--line)}
 .page-footer span{letter-spacing:1px;font-size:0.875rem}
+#license-lock{position:fixed;inset:0;z-index:100;display:grid;place-items:center;padding:24px;background:var(--bg);overflow:auto}
+.license-card{width:min(420px,100%);text-align:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg);padding:32px 28px}
+.license-card h2{margin:12px 0 6px}.license-card .field{text-align:left;margin:20px 0 4px}
+.license-card input{width:100%;text-align:center;letter-spacing:2px;text-transform:uppercase}
+.license-card .warn-text{min-height:1.4em;margin:8px 0 12px}
+.license-icon{display:inline-grid;place-items:center;width:56px;height:56px;border-radius:50%;background:var(--surface-2);color:var(--brand)}.license-icon svg{width:28px;height:28px}
+.page-footer .copyright{display:block;margin-top:4px;font-size:0.75rem;letter-spacing:0.5px}
 .bottom-nav{display:none}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 48px}
 /* 區塊：不用卡片框和陰影，標題上方一條 1px 深色線 */
